@@ -34,6 +34,7 @@ import { useFeed } from "./useFeed";
 import type { FeedMode, Post, Profile } from "../shared/types";
 import DeleteAccount from "./components/DeleteAccount";
 import PhotoPlace from "./components/PhotoPlace";
+import { PostShareDialog, deliverPostLink, type SharedLink } from "./components/PostShareDialog";
 import { accountAction } from "../shared/account";
 import {
   About,
@@ -169,6 +170,7 @@ export default function App() {
   const [detail, setDetail] = useState<Post | null>(null);
   const [report, setReport] = useState<Post | null>(null);
   const [deleting, setDeleting] = useState<Post | null>(null);
+  const [sharedLink, setSharedLink] = useState<SharedLink | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState<string[]>([]);
   const busyRef = useRef(new Set<string>());
@@ -227,6 +229,7 @@ export default function App() {
         setDetail(null);
         setReport(null);
         setDeleting(null);
+        setSharedLink(null);
         if (changedAccount) setModal(null);
       }
     });
@@ -343,20 +346,20 @@ export default function App() {
     });
   }
   async function share(post: Post) {
-    if (post.sample)
-      return notify("샘플 사진입니다. 실제 게시물은 링크로 공유할 수 있어요.");
-    const url = `${location.origin}/#post/${post.id}`;
-    try {
-      if (navigator.share)
-        await navigator.share({ title: "nepeel · 있는 그대로의 순간", url });
-      else {
-        await navigator.clipboard.writeText(url);
-        notify("링크를 복사했어요. 로그인한 멤버에게만 사진이 보여요.");
+    if (!supabase || post.sample || post.user_id !== userId) return;
+    const client = supabase;
+    await run(`share-${post.id}`, async () => {
+      const { data, error } = await client.rpc("set_post_share_link", { p_post: post.id, p_enabled: true });
+      if (authUser.current !== post.user_id) return;
+      if (error || typeof data !== "string" || !/^[\w-]{43}$/.test(data)) {
+        notify("공유 링크를 만들지 못했어요. 다시 시도해 주세요.");
+        return;
       }
-    } catch (e) {
-      if (!(e instanceof DOMException && e.name === "AbortError"))
-        notify("링크를 공유하지 못했어요. 다시 시도해 주세요.");
-    }
+      const url = `${location.origin}/s/${data}`;
+      const status = await deliverPostLink(url);
+      if (authUser.current === post.user_id)
+        setSharedLink({ postId: post.id, userId: post.user_id, url, status });
+    });
   }
   function searchSubmit(e: FormEvent) {
     e.preventDefault();
@@ -389,13 +392,16 @@ export default function App() {
       >
         <MessageCircle />
       </button>
-      <button
+      {post.user_id === userId && <button
         className="icon-button"
-        aria-label="게시물 공유"
+        aria-label="공개 링크로 게시물 공유"
+        title="공개 링크로 게시물 공유"
+        disabled={busy.includes(`share-${post.id}`)}
+        aria-busy={busy.includes(`share-${post.id}`)}
         onClick={() => void share(post)}
       >
-        <Send />
-      </button>
+        {busy.includes(`share-${post.id}`) ? <LoaderCircle className="spin" /> : <Send />}
+      </button>}
       <span className="action-spacer" />
       <span className="capture-label">
         <ShieldCheck size={13} /> 앱 촬영
@@ -881,6 +887,13 @@ export default function App() {
         />
       )}
       {modal === "camera" && <CameraDialog close={() => setModal(null)} />}
+      {sharedLink && sharedLink.userId === userId && <PostShareDialog key={sharedLink.url}
+        link={sharedLink} close={() => setSharedLink(null)}
+        onRevoked={() => {
+          setSharedLink(null);
+          if (authUser.current === sharedLink.userId) notify("공유 링크를 끊었어요.");
+        }}
+      />}
       {modal === "edit" && profile && (
         <EditProfile
           profile={profile}
