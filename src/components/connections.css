@@ -162,6 +162,22 @@
   overflow: auto;
 }
 
+.hi-thread-group h3 {
+  padding: 12px 10px 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.hi-thread-group + .hi-thread-group {
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.hi-threads > .outline-button {
+  margin: 8px 10px;
+}
+
 .hi-thread {
   width: 100%;
   display: flex;
@@ -183,6 +199,10 @@
 
 .hi-thread.selected {
   background: var(--accent-soft);
+}
+
+.hi-thread:focus-visible {
+  outline-offset: -2px;
 }
 
 .hi-thread > span:not(.avatar) {

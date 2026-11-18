@@ -3,6 +3,7 @@ import type { KeyboardEvent, ReactNode, TouchEvent } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ArrowUpRight, ChevronLeft, ChevronRight, Film, Image, ListVideo, Pause, RotateCw, Send, X } from "lucide-react";
 import { useComments } from "../../shared/useComments";
+import type { CommentDrafts } from "../../shared/commentDrafts";
 import type { Post } from "../../shared/types";
 import { Avatar } from "../App";
 import { supabase } from "../lib/supabase";
@@ -13,6 +14,8 @@ interface ViewerProps {
   post: Post;
   actions: ReactNode;
   userId?: string;
+  commentDrafts?: CommentDrafts;
+  focusComments?: boolean;
   close: () => void;
   login: () => void;
   onComment: () => void;
@@ -68,17 +71,18 @@ function Frame({ post, playThrough, onReady, onEnded, onFailure }: {
 }
 
 export function PostDialog({
-  post, actions, userId, close, login, onComment, client = supabase, onDetails,
+  post, actions, userId, commentDrafts, focusComments = false, close, login, onComment, client = supabase, onDetails,
   onPrevious, onNext, position, total, editorialTitle, credit,
 }: ViewerProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const layout = useRef<HTMLDivElement>(null);
   const commentsBox = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLInputElement>(null);
   const gesture = useRef<{ id: number; x: number; y: number } | null>(null);
   const [continuous, setContinuous] = useState(false);
   const [loadedPhoto, setLoadedPhoto] = useState("");
-  const thread = useComments({ client, userId, postId: post.id, enabled: !post.sample, makeId: newCommentId });
+  const thread = useComments({ client, userId, postId: post.id, enabled: !post.sample, makeId: newCommentId, drafts: commentDrafts });
   const isVideo = post.media_type === "video";
   const kind = isVideo ? "영상" : "사진";
   const KindIcon = isVideo ? Film : Image;
@@ -136,6 +140,18 @@ export function PostDialog({
     gesture.current = null;
     layout.current?.scrollTo(0, 0);
   }, [post.id]);
+
+  useLayoutEffect(() => {
+    if (!focusComments || !client || !userId || post.sample) return;
+    composer.current?.focus({ preventScroll: true });
+    composer.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [focusComments, client, userId, post.id, post.sample]);
+
+  useLayoutEffect(() => {
+    // Loading the first page can push the focused field below the phone viewport.
+    if (composer.current && document.activeElement === composer.current)
+      composer.current.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [thread.loading]);
 
   useEffect(() => {
     const cancel = () => { gesture.current = null; };
@@ -325,8 +341,8 @@ export function PostDialog({
                   commentsBox.current?.scrollTo({ top: 0 });
                 }
               }}>
-                <input id="viewer-comment-input" aria-label="댓글" placeholder="댓글 남기기…" maxLength={500} value={thread.body}
-                  onChange={e => thread.setBody(e.target.value)} disabled={thread.posting} />
+                <input ref={composer} id="viewer-comment-input" aria-label="댓글" placeholder="댓글 남기기…" maxLength={500} value={thread.body}
+                  onChange={e => thread.setBody(e.target.value)} readOnly={thread.posting} />
                 <button className="icon-button" aria-label="댓글 게시" disabled={thread.posting || thread.loading || !thread.body.trim()} aria-busy={thread.posting}>
                   <Send size={19} aria-hidden="true" />
                 </button>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   ChevronRight,
@@ -17,21 +17,25 @@ import {
   connectError,
   defaultPreferences,
   savePreferences,
+  type Connection,
   type ConnectionPreferences,
   type Gender,
   type BlockedConnection,
 } from "../../shared/connect";
 import { useConnections } from "../../shared/useConnections";
+import type { HiMessageDrafts } from "../lib/hi-message-drafts";
 import { Avatar, Dialog } from "../App";
 import "./connections.css";
 
 export default function Connections({
   userId,
   login,
+  messageDrafts,
   client = supabase,
 }: {
   userId?: string;
   login: () => void;
+  messageDrafts: HiMessageDrafts;
   client?: SupabaseClient | null;
 }) {
   const [en, setEn] = useState(
@@ -51,24 +55,30 @@ export default function Connections({
   });
   const [consent, setConsent] = useState(false);
   const [notice, setNotice] = useState("");
-  const [body, setBody] = useState("");
   const [reporting, setReporting] = useState(false);
   const [reason, setReason] = useState("other");
   const [unblocking, setUnblocking] = useState<BlockedConnection | null>(null);
   const conversationTitle = useRef<HTMLHeadingElement>(null);
   const inboxOpener = useRef<HTMLButtonElement | null>(null);
-  const pendingMessage = useRef<{
-    body: string;
-    connection: string;
-    id: string;
-  } | null>(null);
+  const messageInput = useRef<HTMLTextAreaElement>(null);
+  const acceptedRequest = useRef<string | null>(null);
   const conversation = h.items.find((i) => i.id === h.selected);
+  useSyncExternalStore(messageDrafts.subscribe, messageDrafts.snapshot);
+  const body = conversation?.status === "accepted" ? messageDrafts.body(conversation.id) : "";
   useEffect(() => {
-    setBody("");
+    messageDrafts.reconcile(h.items);
+  }, [messageDrafts, h.items]);
+  useEffect(() => {
     setReporting(false);
-    pendingMessage.current = null;
+    acceptedRequest.current = null;
     if (h.selected) conversationTitle.current?.focus();
   }, [h.selected]);
+  useEffect(() => {
+    if (!h.busy && conversation?.status === "accepted" && acceptedRequest.current === conversation.id) {
+      messageInput.current?.focus();
+      acceptedRequest.current = null;
+    }
+  }, [h.busy, conversation?.id, conversation?.status]);
   function openSettings() {
     if (!userId) return login();
     setDraft({ ...(h.prefs ?? defaultPreferences) });
@@ -89,6 +99,17 @@ export default function Connections({
           : value === "expired"
             ? t("요청 만료", "Expired")
             : t("종료된 요청", "Closed");
+  const groups = {
+    received: { title: t("받은 요청", "Received requests"), rows: [] as Connection[] },
+    chats: { title: t("대화", "Chats"), rows: [] as Connection[] },
+    sent: { title: t("보낸 요청", "Sent requests"), rows: [] as Connection[] },
+    closed: { title: t("종료된 연결", "Closed connections"), rows: [] as Connection[] },
+  };
+  for (const item of h.items) {
+    const group = item.status === "pending" ? (item.incoming ? "received" : "sent")
+      : item.status === "accepted" ? "chats" : "closed";
+    groups[group].rows.push(item);
+  }
   async function sayHi() {
     if (!userId) return login();
     if (!h.prefs?.enabled) return openSettings();
@@ -226,7 +247,8 @@ export default function Connections({
             <div className="hi-inbox">
               <div
                 className="hi-threads"
-                aria-label={t("대화 목록", "Conversations")}
+                role="region"
+                aria-label={t("대화와 요청 목록", "Chats and requests")}
               >
                 {h.items.length === 0 ? (
                   <div className="hi-empty compact">
@@ -236,23 +258,30 @@ export default function Connections({
                     </h3>
                   </div>
                 ) : (
-                  h.items.map((item) => (
-                    <button
-                      key={item.id}
-                      className={`hi-thread ${item.id === h.selected ? "selected" : ""}`}
-                      aria-pressed={item.id === h.selected}
-                      onClick={(event) => {
-                        inboxOpener.current = event.currentTarget;
-                        h.select(item.id);
-                      }}
-                    >
-                      <Avatar name={item.display_name} />
-                      <span>
-                        <b>{item.display_name}</b>
-                        <small>{status(item.status, item.incoming)}</small>
-                      </span>
-                      <ChevronRight size={16} />
-                    </button>
+                  Object.entries(groups).map(([key, group]) => group.rows.length > 0 && (
+                    <section className="hi-thread-group" key={key} aria-labelledby={`hi-group-${key}`}>
+                      <h3 id={`hi-group-${key}`}>{group.title}</h3>
+                      {group.rows.map((item) => (
+                        <button
+                          key={item.id}
+                          id={`hi-thread-${item.id}`}
+                          className={`hi-thread ${item.id === h.selected ? "selected" : ""}`}
+                          aria-pressed={item.id === h.selected}
+                          onClick={(event) => {
+                            inboxOpener.current = event.currentTarget;
+                            h.select(item.id);
+                          }}
+                        >
+                          <Avatar name={item.display_name} />
+                          <span>
+                            <b>{item.display_name}</b>
+                            <small>{item.status === "accepted" && messageDrafts.body(item.id) ? t("작성 중", "Draft")
+                              : key === "closed" ? status(item.status, item.incoming) : `@${item.username}`}</small>
+                          </span>
+                          <ChevronRight size={16} aria-hidden="true" />
+                        </button>
+                      ))}
+                    </section>
                   ))
                 )}
                 {h.more && (
@@ -261,7 +290,7 @@ export default function Connections({
                     disabled={h.busy}
                     onClick={() => void h.run(h.loadMore)}
                   >
-                    {t("이전 대화 더 보기", "Older conversations")}
+                    {t("이전 대화와 요청 더 보기", "Load older chats and requests")}
                   </button>
                 )}
               </div>
@@ -280,13 +309,16 @@ export default function Connections({
                       aria-label={t("대화 닫기", "Close conversation")}
                       onClick={() => {
                         h.select(null);
-                        requestAnimationFrame(() => inboxOpener.current?.focus());
+                        requestAnimationFrame(() => {
+                          const opener = inboxOpener.current;
+                          (opener?.isConnected ? opener : document.getElementById(`hi-thread-${conversation.id}`))?.focus();
+                        });
                       }}
                     >
                       <X size={18} />
                     </button>
                   </header>
-                  <div
+                  {conversation.status !== "blocked" && <div
                     className="hi-messages"
                     role="log"
                     aria-label={t("메시지", "Messages")}
@@ -319,7 +351,7 @@ export default function Connections({
                         </div>
                       ))
                     )}
-                  </div>
+                  </div>}
                   {conversation.status === "pending" && (
                     <div className="hi-request">
                       <p>
@@ -338,14 +370,13 @@ export default function Connections({
                           <button
                             className="dark-button"
                             disabled={h.busy}
-                            onClick={() =>
-                              void h.run(() =>
-                                h.act("respond_to_hi", {
-                                  p_connection: conversation.id,
-                                  p_accept: true,
-                                }),
-                              )
-                            }
+                            onClick={() => {
+                              acceptedRequest.current = conversation.id;
+                              void h.run(() => h.act("respond_to_hi", {
+                                p_connection: conversation.id,
+                                p_accept: true,
+                              }));
+                            }}
                           >
                             <Check size={16} />
                             {t("수락", "Accept")}
@@ -374,26 +405,14 @@ export default function Connections({
                       onSubmit={(e) => {
                         e.preventDefault();
                         void h.run(async () => {
-                          const text = body.trim();
-                          if (!text) return;
-                          if (
-                            !pendingMessage.current ||
-                            pendingMessage.current.body !== text ||
-                            pendingMessage.current.connection !==
-                              conversation.id
-                          )
-                            pendingMessage.current = {
-                              body: text,
-                              connection: conversation.id,
-                              id: crypto.randomUUID(),
-                            };
+                          const message = messageDrafts.prepareSend(conversation.id);
+                          if (!message) return;
                           await h.act("send_direct_message", {
                             p_connection: conversation.id,
-                            p_body: text,
-                            p_client_id: pendingMessage.current.id,
+                            p_body: message.body,
+                            p_client_id: message.clientId,
                           });
-                          setBody("");
-                          pendingMessage.current = null;
+                          messageDrafts.sent(conversation.id, message.clientId);
                         });
                       }}
                     >
@@ -402,8 +421,9 @@ export default function Connections({
                       </label>
                       <textarea
                         id="hi-message"
+                        ref={messageInput}
                         value={body}
-                        onChange={(e) => setBody(e.target.value)}
+                        onChange={(e) => messageDrafts.edit(conversation.id, e.target.value)}
                         maxLength={1000}
                         rows={2}
                         placeholder={t("메시지 입력", "Write a message")}
@@ -696,6 +716,7 @@ export default function Connections({
                       p_connection: conversation.id,
                       p_reason: reason,
                     });
+                    messageDrafts.edit(conversation.id, "");
                     setReporting(false);
                   })
                 }
@@ -710,6 +731,7 @@ export default function Connections({
                     await h.act("block_connection", {
                       p_connection: conversation.id,
                     });
+                    messageDrafts.edit(conversation.id, "");
                     setReporting(false);
                   })
                 }

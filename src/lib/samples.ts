@@ -76,6 +76,14 @@ const selection: EditorialItem[] = [
 ];
 
 export const sampleMeta = selection.map(item => ({ ...item, tag: item.title }));
+export const editorialTopics = [...new Set(selection.map(item => item.category))];
+
+export function matchesEditorialSearch(post: Post, search: string) {
+  if (!search) return true;
+  const item = sampleMeta.find(sample => sample.id === post.id);
+  return [post.caption, post.display_name, item?.title, item?.category, item?.creator]
+    .join(" ").toLocaleLowerCase().includes(search.toLocaleLowerCase());
+}
 
 export const samplePosts: Post[] = selection.map(item => ({
   id: item.id,
