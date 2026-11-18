@@ -3,7 +3,7 @@ import type { FormEvent, MouseEvent, ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
   Aperture, ArrowDown, ArrowLeft, Bookmark, Camera, Check, Compass, Flag, Grid2X2, Grid3X3,
-  Heart, Home, Layers, LoaderCircle, MessageCircle, Search, Send, Settings, Trash2, UserRound, UsersRound, X,
+  Heart, Home, Layers, LayoutGrid, LoaderCircle, MessageCircle, Minimize2, Rows3, Search, Send, Settings, Trash2, UserRound, UsersRound, X,
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import { editorialTopics, matchesEditorialSearch, sampleMeta, samplePosts } from "./lib/samples";
@@ -129,6 +129,8 @@ export function Dialog({
     </dialog>
   );
 }
+
+const mediaChoices = [["all", "전체"], ["photo", "사진"], ["video", "동영상"]] as const;
 
 export default function App() {
   const [hash, setHash] = useState(() => location.hash);
@@ -543,12 +545,6 @@ export default function App() {
         </Suspense> : <p role="status" className="loading-state">묶음 불러오는 중…</p>)}
         {showFeed && <>
           {postLink && <button className="back-link" onClick={() => go("feed")}><ArrowLeft size={16}/> 피드로</button>}
-          {view === "feed" && !postLink && <div className="home-view-bar"><nav className="home-modes library-tabs" aria-label="홈 보기 방식">
-            <a href={browseHash({ ...route, layout: undefined, open: "" })} aria-current={!route.layout ? "page" : undefined}>피드</a>
-            <a href={browseHash({ ...route, layout: "grid", open: "" })} aria-current={route.layout === "grid" ? "page" : undefined}>그리드</a>
-          </nav><button type="button" className="audience-toggle" aria-pressed={following}
-            onClick={() => navigate({ ...route, audience: following ? undefined : "following", open: "" })}>
-              {following ? <Check size={16}/> : <UsersRound size={16}/>} 팔로잉</button></div>}
           {scopedSearch && <form className="discover-field" role="search" onSubmit={searchSubmit}>
             <Search size={20} aria-hidden="true"/><input type="search" aria-label={view === "saved" ? "저장한 게시물 검색" : "탐색 검색어"}
               placeholder={view === "saved" ? "저장한 게시물 검색" : "사진, 영상, 사람 검색"}
@@ -566,12 +562,39 @@ export default function App() {
             {editorialTopics.map(topic => <a key={topic} id={"discover-topic-" + topic} href={browseHash({ view, filter: "all", search: topic, open: "", postId: "" })}
               onClick={e => openTopic(e, topic)}>{topic}</a>)}
           </nav>}
-          {!postLink && <div className="browse-filters">
-            <div className="filter-strip" aria-label="콘텐츠 필터">
-              {([["all", "전체"], ["photo","사진"], ["video","동영상"]] as const).map(([key,label]) =>
+          {!postLink && <div className={view === "feed" ? "browse-filters home-controls" : "browse-filters"}>
+            <div className="filter-strip" role="group" aria-label="콘텐츠 필터">
+              {mediaChoices.map(([key,label]) =>
                 <button type="button" key={key} aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</button>)}
             </div>
-            {(view !== "feed" || route.layout === "grid") && <div className="density-group" aria-label="그리드 간격">
+            {view === "feed" ? <>
+              <select className="compact-media-filter" aria-label="콘텐츠 필터" value={filter}
+                onChange={e => setFilter(e.currentTarget.value as MediaFilter)}>
+                {mediaChoices.map(([key,label]) => <option key={key} value={key}>{label}</option>)}
+              </select>
+              <button type="button" className="audience-toggle" aria-pressed={following}
+                onClick={() => navigate({ ...route, audience: following ? undefined : "following", open: "" })}>
+                {following ? <Check size={16} aria-hidden="true"/> : <UsersRound size={16} aria-hidden="true"/>} 팔로잉
+              </button>
+              <div className="home-display">
+                {route.layout === "grid" && <button type="button" className="grid-density-toggle"
+                  aria-label="촘촘한 그리드" aria-pressed={dense} onClick={() => changeDensity(!dense)}>
+                  <Minimize2 size={18} aria-hidden="true"/>
+                </button>}
+                <div className="view-switch" role="radiogroup" aria-label="홈 보기 방식">
+                  <label>
+                    <input type="radio" name="home-layout" aria-label="피드 보기" checked={!route.layout}
+                      onChange={() => navigate({ ...route, layout: undefined, open: "" })}/>
+                    <Rows3 size={19} aria-hidden="true"/>
+                  </label>
+                  <label>
+                    <input type="radio" name="home-layout" aria-label="그리드 보기" checked={route.layout === "grid"}
+                      onChange={() => navigate({ ...route, layout: "grid", open: "" })}/>
+                    <LayoutGrid size={19} aria-hidden="true"/>
+                  </label>
+                </div>
+              </div>
+            </> : <div className="density-group" role="group" aria-label="그리드 간격">
               <button type="button" aria-label="기본 그리드" aria-pressed={!dense} onClick={() => changeDensity(false)}><Grid2X2 size={18}/></button>
               <button type="button" aria-label="촘촘한 그리드" aria-pressed={dense} onClick={() => changeDensity(true)}><Grid3X3 size={18}/></button>
             </div>}
