@@ -1,7 +1,8 @@
 import handler, { type CaptureResponse } from "../../server/capture.js";
+import { mintAfterCapture } from "../../server/certificate-mint.js";
 
 // Standard Request/Response adapter; capture verification stays provider-independent.
-export default async function capture(request: Request): Promise<Response> {
+export default async function capture(request: Request, context?: {waitUntil?(job: Promise<unknown>): void}): Promise<Response> {
   const headers = new Headers({
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
@@ -46,6 +47,7 @@ export default async function capture(request: Request): Promise<Response> {
       body,
     },
     response,
+    () => context?.waitUntil?.(mintAfterCapture()),
   );
   return Response.json(payload, { status, headers });
 }

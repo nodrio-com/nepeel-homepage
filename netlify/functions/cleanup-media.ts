@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cleanupMedia } from "../../server/account.js";
 import { required } from "../../server/env.js";
+import { cleanupCertificates } from "../../server/certificate-mint.js";
 
 // Netlify does not expose scheduled functions as public request endpoints.
 export const config = { schedule: "0 3 * * *" };
@@ -21,5 +22,5 @@ export default async function cleanup() {
     removed += count;
     if (count < 100) break;
   }
-  return Response.json({ removed });
+  return Response.json({ removed, certificatesRemoved: await cleanupCertificates(client) });
 }
