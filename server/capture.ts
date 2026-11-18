@@ -5,6 +5,8 @@ import { ApiError, textField, uuid } from "../server/validation.js";
 import { iosRegistration } from "../server/integrity.js";
 import { required } from "./env.js";
 import { publishPhoto } from "./publication.js";
+import { certifyMedia } from "./certify-media.js";
+import { changeCertificateShare, listCertificates } from "./certificate-owner.js";
 
 export interface CaptureRequest {
   method?: string;
@@ -19,6 +21,7 @@ export interface CaptureResponse {
 export default async function handler(
   req: CaptureRequest,
   res: CaptureResponse,
+  onQueued?: () => void,
 ) {
   res.setHeader("Cache-Control", "no-store");
   if (req.method !== "POST") {
@@ -60,10 +63,16 @@ export default async function handler(
         : (req.body as Record<string, unknown>);
     if (!body || typeof body !== "object")
       throw new ApiError(400, "잘못된 요청입니다.");
+    if (body.action === "certify")
+      return res.status(201).json(await certifyMedia(client, user.id, body, onQueued));
+    if (body.action === "listCertificates")
+      return res.status(200).json(await listCertificates(client, user.id, body.before));
+    if (body.action === "shareCertificate" || body.action === "revokeCertificateShare")
+      return res.status(200).json(await changeCertificateShare(client, user.id, body.id, body.action === "revokeCertificateShare"));
     if (body.action === "deleteAccount")
       return res.status(200).json(await deleteAccount(client, user, body));
     if (body.action === "challenge") {
-      if (body.purpose !== "capture" && body.purpose !== "register")
+      if (typeof body.purpose !== "string" || !["capture", "register", "certify"].includes(body.purpose))
         throw new ApiError(400, "잘못된 인증 요청입니다.");
       const { data, error } = await client.rpc("issue_challenge", {
         p_user: user.id,

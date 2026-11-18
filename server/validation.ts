@@ -32,17 +32,21 @@ export function captionField(value: unknown): string {
     throw new ApiError(400, "사진 설명은 1,000자 이내로 입력해 주세요.");
   return value.trim();
 }
-export async function decodePhoto(value: unknown) {
-  const input = textField(value, Math.ceil(CAPTURE_MAX_BYTES / 3) * 4, "사진");
-  if (
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-      input,
-    )
-  )
-    throw new ApiError(400, "잘못된 사진 형식입니다.");
+export function decodeCaptureBytes(value: unknown, limit: number, name: string) {
+  if (typeof value === "string" && value.length > Math.ceil(limit / 3) * 4)
+    throw new ApiError(413, `${name} 파일이 너무 큽니다.`);
+  const input = textField(value, Math.ceil(limit / 3) * 4, name);
   const bytes = Buffer.from(input, "base64");
-  if (!bytes.length || bytes.length > CAPTURE_MAX_BYTES)
-    throw new ApiError(413, "사진은 2MB 이하여야 합니다.");
+  if (bytes.length > limit) throw new ApiError(413, `${name} 파일이 너무 큽니다.`);
+  if (!bytes.length || bytes.toString("base64") !== input)
+    throw new ApiError(400, `잘못된 ${name} 형식입니다.`);
+  return bytes;
+}
+export async function decodePhoto(value: unknown) {
+  const bytes = decodeCaptureBytes(value, CAPTURE_MAX_BYTES, "사진");
+  return { clean: await sanitizePhoto(bytes), hash: sha256(bytes) };
+}
+export async function sanitizePhoto(bytes: Buffer) {
   try {
     const picture = sharp(bytes, {
       limitInputPixels: 25_000_000,
@@ -58,12 +62,11 @@ export async function decodePhoto(value: unknown) {
     )
       throw new Error("Invalid JPEG");
     // Decode and re-encode to validate pixels and strip EXIF/GPS. Proof binds the original bytes.
-    const clean = await picture
+    return await picture
       .rotate()
       .resize(1800, 1800, { fit: "inside", withoutEnlargement: true })
       .jpeg({ quality: 85 })
       .toBuffer();
-    return { clean, hash: sha256(bytes) };
   } catch {
     throw new ApiError(400, "사진을 읽을 수 없습니다. 다시 촬영해 주세요.");
   }
