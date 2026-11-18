@@ -1,59 +1,40 @@
-import { useRef, useState } from "react";
-import type { ReactNode } from "react";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { useState } from "react";
 import {
-  ArrowUpRight,
   Camera,
   Check,
-  Send,
-  ShieldCheck,
-  Smartphone,
+  ChevronRight,
+  Film,
+  Image as ImageIcon,
 } from "lucide-react";
-import { Avatar, Dialog, readableError } from "../App";
+import { Dialog, readableError } from "../App";
 import { supabase } from "../lib/supabase";
 import { updateProfile } from "../../shared/data";
-import { useComments } from "../../shared/useComments";
 import type { Post, Profile } from "../../shared/types";
 import { reportPost, reportReasons } from "../../shared/account";
-import PhotoPlace from "./PhotoPlace";
+import "./utility-screens.css";
 
 export { AuthDialog } from "./AuthDialog";
-export function CameraDialog({ close }: { close: () => void }) {
+function CertificateExamples() {
   return (
-    <Dialog title="순간은 앱에서 시작돼요." close={close}>
-      <div className="camera-dialog-icon">
-        <Camera size={40} />
+    <div className="certificate-example-links">
+      <a href="/verify/example-photo"><ImageIcon aria-hidden="true" /><span>사진 인증서 예시</span><ChevronRight aria-hidden="true" /></a>
+      <a href="/verify/example-video"><Film aria-hidden="true" /><span>동영상 인증서 예시</span><ChevronRight aria-hidden="true" /></a>
+    </div>
+  );
+}
+
+export function CameraDialog({ close }: { close: () => void }) {
+  const mobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  return (
+    <Dialog title="앱 카메라" close={close}>
+      <div className="camera-availability">
+        <p>사진은 nepeel 모바일 앱에서 촬영하고 게시해요. 현재는 테스트 앱을 설치한 사용자만 촬영할 수 있어요.</p>
+        {mobileDevice && <a className="dark-button" href="nepeel://camera">
+          <Camera size={17} aria-hidden="true" />설치된 테스트 앱 열기
+        </a>}
+        <CertificateExamples />
       </div>
-      <p className="dialog-lead">
-        찍는 건 앱에서.
-        <br />
-        <b>함께 보는 건 어디서나.</b>
-      </p>
-      <p className="muted">
-        nepeel은 앱 카메라로 직접 촬영한 사진만 게시할 수 있어요. 웹에서는
-        피드를 보고, 좋아요와 댓글로 연결돼요.
-      </p>
-      <ol className="steps">
-        <li>
-          <span>1</span>공식 nepeel 앱으로 로그인
-        </li>
-        <li>
-          <span>2</span>앱 안에서 지금의 순간 촬영
-        </li>
-        <li>
-          <span>3</span>색감과 장소를 고르고 웹·앱에 함께 게시
-        </li>
-      </ol>
-      <div className="info-box">
-        <Smartphone size={18} />
-        <span>
-          앱 정식 출시 준비 중<br />
-          <small>설치한 테스트 앱이 있다면 아래에서 열 수 있어요.</small>
-        </span>
-      </div>
-      <a className="dark-button full" href="nepeel://camera">
-        설치된 앱 열기 <ArrowUpRight size={17} />
-      </a>
     </Dialog>
   );
 }
@@ -120,158 +101,7 @@ export function EditProfile({
   );
 }
 export { Recovery } from "./Recovery";
-export function PostDialog({
-  post,
-  actions,
-  userId,
-  close,
-  login,
-  onComment,
-  client = supabase,
-  onDetails,
-}: {
-  post: Post;
-  actions: ReactNode;
-  userId?: string;
-  close: () => void;
-  login: () => void;
-  onComment: () => void;
-  client?: SupabaseClient | null;
-  onDetails?: (patch: Partial<Post>) => void;
-}) {
-  const thread = useComments({
-    client,
-    userId,
-    postId: post.id,
-    enabled: !post.sample,
-    makeId: () => crypto.randomUUID(),
-  });
-  const { comments, body, setBody, posting: pending, loading } = thread;
-  const commentsBox = useRef<HTMLDivElement>(null);
-  return (
-    <Dialog
-      title={`${post.display_name}의 순간`}
-      close={() => {
-        if (!pending) close();
-      }}
-      wide
-    >
-      <div className="detail-layout">
-        <img
-          className="detail-image"
-          src={post.image_url}
-          alt={post.caption || `${post.display_name}의 사진`}
-        />
-        <div className="detail-content">
-          <div className="detail-caption">
-            <Avatar name={post.display_name} />
-            <p>
-              <b>{post.display_name}</b>
-              <span>{post.caption}</span>
-            </p>
-          </div>
-          {actions}
-          <PhotoPlace post={post} userId={userId} onChange={onDetails} />
-          {!post.sample && (
-            <small className="muted">최신 댓글부터 보여요.</small>
-          )}
-          <div className="comments" ref={commentsBox} aria-busy={loading}>
-            {loading ? (
-              <p className="muted" role="status">
-                댓글을 불러오는 중…
-              </p>
-            ) : comments.length ? (
-              comments.map((c) => (
-                <div className="comment" key={c.id}>
-                  <Avatar name={c.profiles.display_name} size="small" />
-                  <p>
-                    <b>{c.profiles.display_name}</b>
-                    <span>{c.body}</span>
-                  </p>
-                </div>
-              ))
-            ) : (
-              !thread.loadError && (
-                <p className="muted">
-                  {post.sample
-                    ? "샘플 사진이에요. 가입하고 진짜 순간에 이야기를 남겨보세요."
-                    : "첫 번째 이야기를 남겨보세요."}
-                </p>
-              )
-            )}
-          </div>
-          {thread.loadError && (
-            <p className="form-error" role="alert">
-              댓글을 불러오지 못했어요.{" "}
-              <button
-                className="text-button"
-                type="button"
-                onClick={thread.reload}
-              >
-                다시 시도
-              </button>
-            </p>
-          )}
-          {thread.moreError && (
-            <p className="form-error" role="alert">
-              이전 댓글을 불러오지 못했어요. 다시 시도해 주세요.
-            </p>
-          )}
-          {thread.hasMore && (
-            <button
-              className="outline-button full"
-              disabled={thread.loadingMore}
-              aria-busy={thread.loadingMore}
-              onClick={() => void thread.loadMore()}
-            >
-              {thread.loadingMore
-                ? "이전 댓글을 불러오는 중…"
-                : "이전 댓글 더 보기"}
-            </button>
-          )}
-          {thread.postError && (
-            <p className="form-error" role="alert">
-              댓글을 남기지 못했어요. 작성한 내용으로 다시 시도해 주세요.
-            </p>
-          )}
-          <form
-            className="comment-form"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (!userId || post.sample) return login();
-              if (await thread.submit()) {
-                onComment();
-                commentsBox.current?.scrollTo({ top: 0 });
-              }
-            }}
-          >
-            <input
-              aria-label="댓글"
-              placeholder="따뜻한 한마디 남기기…"
-              maxLength={500}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              disabled={pending}
-            />
-            <button
-              className="icon-button"
-              aria-label="댓글 게시"
-              disabled={pending || loading || !body.trim()}
-              aria-busy={pending}
-            >
-              <Send size={20} />
-            </button>
-          </form>
-          <small className="detail-foot">
-            {post.sample
-              ? "출처: Unsplash · 서비스 화면 예시"
-              : "앱 인증을 확인한 사진 · 장면의 진위 자체를 보증하지 않습니다."}
-          </small>
-        </div>
-      </div>
-    </Dialog>
-  );
-}
+export { PostDialog } from "./MediaViewer";
 export function ReportDialog({
   post,
   userId,
@@ -329,62 +159,22 @@ export function ReportDialog({
 }
 export function About({ onCamera }: { onCamera: () => void }) {
   return (
-    <section className="about-page">
-      <div className="eyebrow">OUR POINT OF VIEW</div>
-      <h1>
-        LESS FAKE.
-        <br />
-        <span>MORE LIFE.</span>
-      </h1>
-      <p className="about-lead">
-        완벽하게 만들어진 이미지보다,
-        <br />
-        조금 서툴러도 직접 살아낸 순간을 믿어요.
-      </p>
-      <div className="about-photo">
-        <img
-          src="/images/roadtrip.webp"
-          alt="넓은 하늘과 붉은 바위가 펼쳐진 여행지, Unsplash 샘플 사진"
-        />
-        <span>
-          THE WORLD IS STILL OUT THERE. <ArrowUpRight />
-        </span>
-      </div>
-      <h2>
-        사진을 고르는 곳이 아니라,
-        <br />
-        순간을 찍는 곳.
-      </h2>
-      <p>
-        nepeel은 Non-AI를 지향하는 사진 SNS입니다. 사진은 공식 앱의 카메라로만
-        촬영하고, 웹과 앱은 같은 계정과 피드로 연결됩니다. 외부 파일 선택이나
-        갤러리 업로드는 제공하지 않습니다.
-      </p>
-      <div className="about-promise">
-        <ShieldCheck size={28} />
-        <div>
-          <h3>‘앱 촬영’ 표시는 무엇을 뜻하나요?</h3>
-          <p>
-            게시할 때 앱·기기 인증과 사진 데이터의 일치를 서버에서 확인했다는
-            뜻입니다. AI 탐지 결과가 아니며, 화면 재촬영이나 모든 기기 변조까지
-            막아 장면의 진위를 보장하지는 않습니다.
-          </p>
-        </div>
-      </div>
-      <h3>함께 지키는 촬영 원칙</h3>
-      <ul>
-        <li>내가 직접 마주한 순간을 촬영해 주세요.</li>
-        <li>생성 이미지나 다른 사람의 사진을 다시 찍어 올리지 마세요.</li>
-        <li>다른 사람의 사생활과 초상권을 존중해 주세요.</li>
-        <li>유해한 콘텐츠나 의심스러운 사진은 신고해 주세요.</li>
-      </ul>
-      <button className="dark-button" onClick={onCamera}>
-        내 시선으로 시작하기 <ArrowUpRight size={17} />
-      </button>
-      <p className="muted">
-        둘러보기의 사진은 Unsplash에서 가져온 화면 예시이며, 촬영 인증을 받은
-        회원 게시물이 아닙니다.
-      </p>
+    <section className="service-info">
+      <header className="page-heading"><h1>서비스 소개</h1></header>
+      <section>
+        <h2>사진 게시</h2>
+        <p>nepeel 피드에는 앱 카메라로 직접 찍은 사진을 게시해요. 웹에서는 회원의 사진을 보고, 댓글을 달거나 저장할 수 있어요.</p>
+        <button className="service-link" onClick={onCamera}><Camera size={17} />앱 카메라 안내<ChevronRight size={16} /></button>
+      </section>
+      <section>
+        <h2>촬영 인증</h2>
+        <p>‘앱 촬영’ 표시는 서버가 앱·기기 인증 정보와 촬영 파일의 일치를 확인했다는 뜻이에요. 화면을 다시 찍었는지, 장면에 생성 이미지가 있는지는 판별할 수 없어요.</p>
+        <CertificateExamples />
+      </section>
+      <section>
+        <h2>공개 미리보기</h2>
+        <p>로그인 전 피드에서는 출처가 표시된 예시 사진과 동영상을 볼 수 있어요. 회원 게시물은 로그인 후 볼 수 있어요.</p>
+      </section>
     </section>
   );
 }

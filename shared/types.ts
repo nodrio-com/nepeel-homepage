@@ -14,7 +14,7 @@ export interface Post {
   image_path: string;
   created_at: string;
   captured_at: string;
-  platform: "ios" | "android";
+  platform?: "ios" | "android";
   username: string;
   display_name: string;
   like_count: number;
@@ -23,6 +23,8 @@ export interface Post {
   saved: boolean;
   following: boolean;
   image_url: string;
+  media_type?: "photo" | "video";
+  poster_url?: string;
   details?: PhotoDetails;
   sample?: boolean;
 }

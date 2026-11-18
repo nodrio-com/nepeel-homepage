@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  ArrowUpRight,
+  ChevronRight,
   Check,
   Globe2,
-  MapPin,
+  LogIn,
   MessageCircle,
   RefreshCw,
   Send,
-  ShieldCheck,
   SlidersHorizontal,
   X,
 } from "lucide-react";
@@ -56,6 +55,8 @@ export default function Connections({
   const [reporting, setReporting] = useState(false);
   const [reason, setReason] = useState("other");
   const [unblocking, setUnblocking] = useState<BlockedConnection | null>(null);
+  const conversationTitle = useRef<HTMLHeadingElement>(null);
+  const inboxOpener = useRef<HTMLButtonElement | null>(null);
   const pendingMessage = useRef<{
     body: string;
     connection: string;
@@ -66,10 +67,11 @@ export default function Connections({
     setBody("");
     setReporting(false);
     pendingMessage.current = null;
+    if (h.selected) conversationTitle.current?.focus();
   }, [h.selected]);
   function openSettings() {
     if (!userId) return login();
-    setDraft(h.prefs ? { ...h.prefs } : { ...defaultPreferences });
+    setDraft({ ...(h.prefs ?? defaultPreferences) });
     setConsent(false);
     setEditing(true);
   }
@@ -97,8 +99,8 @@ export default function Connections({
         h.select(id);
         setNotice(
           t(
-            "hi를 보냈어요. 상대의 응답을 기다려 주세요.",
-            "Hi sent. Give them a moment to reply.",
+            "Hi를 보냈어요. 상대가 수락하면 대화할 수 있어요.",
+            "Hi sent. You can chat when they accept.",
           ),
         );
       } else
@@ -112,8 +114,8 @@ export default function Connections({
   }
   return (
     <section className="hi-page" lang={en ? "en" : "ko"}>
-      <div className="hi-topline">
-        <span>REAL PEOPLE. SMALL HELLOS.</span>
+      <header className="page-heading hi-heading">
+        <h1>Hi</h1>
         <button
           className="hi-language"
           aria-label={t("Switch to English", "한국어로 전환")}
@@ -122,103 +124,65 @@ export default function Connections({
             localStorage.setItem("nepeel.hi.language", en ? "ko" : "en");
           }}
         >
-          {en ? "한국어" : "EN"}
+          <Globe2 size={16} aria-hidden="true" />
+          <span lang={en ? "ko" : "en"}>{en ? "한국어" : "English"}</span>
         </button>
-      </div>
-      <div className="hi-hero">
-        <div>
-          <p className="hi-kicker">A LITTLE HI. A NEW POSSIBILITY.</p>
-          <h1>{t("우연도, 직접 만나야.", "A hello changes things.")}</h1>
-          <p>
-            {t(
-              "스크롤을 멈추고, 누군가의 오늘에 인사해요.",
-              "Pause the scroll. Say hello to someone's day.",
-            )}
-          </p>
-        </div>
-        <span className="hi-word" aria-hidden="true">
-          hi<span>↗</span>
-        </span>
+      </header>
+      <div className="hi-match">
+        <h2>{t("랜덤 Hi", "Random Hi")}</h2>
+        <p>{t(
+          "연결 조건이 서로 맞는 회원 한 명에게 인사를 보내요. 상대가 수락하면 대화할 수 있어요.",
+          "Send a Hi to one person whose preferences match yours. You can chat once they accept.",
+        )}</p>
+        <small>{t("만 18세 이상 · 24시간에 최대 5회", "Ages 18 and up · Up to 5 requests per 24 hours")}</small>
         <button
-          className="hi-send"
+          className="dark-button hi-send"
           disabled={h.busy || h.loading}
-          onClick={() => void sayHi()}
+          onClick={(event) => {
+            inboxOpener.current = event.currentTarget;
+            void sayHi();
+          }}
         >
-          <span>
-            {h.busy
-              ? t("연결하는 중…", "Connecting…")
-              : t("랜덤 Hi 보내기", "Send a random Hi")}
-          </span>
-          <ArrowUpRight size={24} />
+          {!userId ? <LogIn size={17} /> : h.prefs?.enabled ? <Send size={17} /> : <SlidersHorizontal size={17} />}
+          {!userId ? t("로그인하고 참여하기", "Sign in to join")
+            : h.loading ? t("불러오는 중…", "Loading…")
+            : h.prefs?.enabled ? t("Hi 보내기", "Send a Hi") : t("참여 설정", "Set up discovery")}
         </button>
-        <small>
-          {t(
-            "조건이 서로 맞는 참여자에게 hi가 바로 전송돼요. 하루 최대 5번.",
-            "Sends hi to a mutual match. Up to 5 requests per 24 hours.",
-          )}
-        </small>
       </div>
-      <div className="hi-principles">
-        <span>
-          <ShieldCheck size={16} />
-          {t("18+ · 참여 동의", "18+ · Opt-in")}
-        </span>
-        <span>
-          <MapPin size={16} />
-          {t("도시만 공유", "City only")}
-        </span>
-        <span>
-          <MessageCircle size={16} />
-          {t("수락 후 대화", "Chat after acceptance")}
-        </span>
-      </div>
+      {notice && !h.blocksOpen && <p className="hi-notice" role="status">{notice}</p>}
+      {h.error != null && !editing && !reporting && !h.blocksOpen && (
+        <p className="hi-error" role="alert">{connectError(h.error, en)}</p>
+      )}
       {!userId ? (
-        <div className="hi-empty">
-          <h2>{t("필터보다, 공통점.", "More in common.")}</h2>
-          <p>
-            {t(
-              "내 나이대, 관심 성별, 같은 도시 또는 전 세계. 서로의 조건에 맞는 성인 참여자를 연결해요.",
-              "Your age range, preferred genders, your city or the world. Both people's preferences count.",
-            )}
-          </p>
-          <button className="dark-button" onClick={login}>
-            {t("로그인하고 참여하기", "Sign in to join")}
-            <ArrowUpRight size={17} />
-          </button>
-          <small>
-            {t(
-              "생년월일은 비공개이며 자기신고 방식입니다. 정확한 GPS 위치는 수집하지 않아요.",
-              "Age is self-declared. Birth dates stay private. No precise GPS location is collected.",
-            )}
-          </small>
-        </div>
+        <details className="hi-disclosure">
+          <summary>{t("참여 조건과 공개 정보", "Preferences and privacy")}<ChevronRight size={16} /></summary>
+          <p>{t(
+            "나이대, 성별, 지역, 만남 목적을 설정해요. 나이는 본인이 입력해요. 연결 조건 중 도시와 5년 단위 나이대만 상대에게 보여요. Hi는 GPS를 사용하지 않아요.",
+            "Choose an age range, genders, region and connection type. Age is self-declared. Matches see your city and five-year age band. Hi does not use GPS.",
+          )}</p>
+        </details>
       ) : (
         <>
-          <div className="hi-preferences">
+          {h.prefs && <div className="hi-preferences">
             <div>
               <b>
                 {h.prefs?.enabled
                   ? t("새로운 연결을 받고 있어요", "Open to new connections")
                   : t("연결 참여가 꺼져 있어요", "Discovery is paused")}
               </b>
-              <p>
-                {h.prefs
-                  ? `${h.prefs.scope === "city" ? cityName(h.prefs.city) : t("전 세계", "Worldwide")} · ${h.prefs.age_min}–${h.prefs.age_max} · ${h.prefs.intent === "dating" ? t("설레는 만남", "Dating") : t("새로운 친구", "Friends")}`
-                  : t(
-                      "내 조건을 정하고 시작해요.",
-                      "Set your preferences to get started.",
-                    )}
-              </p>
+              <p>{h.prefs.scope === "city" ? cityName(h.prefs.city) : t("전 세계", "Worldwide")}
+                {" · "}{h.prefs.age_min}–{h.prefs.age_max}
+                {" · "}{h.prefs.intent === "dating" ? t("데이트", "Dating") : t("친구", "Friends")}</p>
             </div>
-            <button
+            {h.prefs.enabled && <button
               className="outline-button"
               disabled={h.loading || h.busy}
               onClick={openSettings}
             >
               <SlidersHorizontal size={16} />
               {t("설정", "Preferences")}
-            </button>
-          </div>
+            </button>}
+          </div>}
           {h.prefs?.enabled && (
             <button
               className="text-button hi-pause"
@@ -234,15 +198,12 @@ export default function Connections({
             </button>
           )}
           <div className="hi-inbox-heading">
-            <h2>{t("나의 Hi", "Your hellos")}</h2>
+            <div><h2>{t("대화함", "Inbox")}</h2>
+              <span>{h.liveState ? t("실시간 업데이트", "Live updates") : t("수동 새로고침", "Manual refresh")}</span>
+            </div>
             <button className="text-button" disabled={h.busy} onClick={() => {
               setUnblocking(null); setNotice(""); h.setBlocksOpen(true);
-            }}>{t("Hi 차단 관리", "Manage Hi blocks")}</button>
-            <span>
-              {h.liveState
-                ? t("실시간 연결됨", "Live updates")
-                : t("새로고침으로 확인", "Refresh for updates")}
-            </span>
+            }}>{t("차단 관리", "Manage blocks")}</button>
             <button
               className="icon-button"
               aria-label={t("대화 새로고침", "Refresh conversations")}
@@ -269,16 +230,10 @@ export default function Connections({
               >
                 {h.items.length === 0 ? (
                   <div className="hi-empty compact">
-                    <MessageCircle size={28} />
+                    <MessageCircle size={24} aria-hidden="true" />
                     <h3>
-                      {t("첫 인사를 기다려요.", "Your first hello awaits.")}
+                      {t("아직 대화가 없어요", "No conversations yet")}
                     </h3>
-                    <p>
-                      {t(
-                        "Hi를 보내거나, 참여 설정을 켜고 기다려 보세요.",
-                        "Send a Hi or turn on discovery to receive one.",
-                      )}
-                    </p>
                   </div>
                 ) : (
                   h.items.map((item) => (
@@ -286,14 +241,17 @@ export default function Connections({
                       key={item.id}
                       className={`hi-thread ${item.id === h.selected ? "selected" : ""}`}
                       aria-pressed={item.id === h.selected}
-                      onClick={() => h.select(item.id)}
+                      onClick={(event) => {
+                        inboxOpener.current = event.currentTarget;
+                        h.select(item.id);
+                      }}
                     >
                       <Avatar name={item.display_name} />
                       <span>
                         <b>{item.display_name}</b>
                         <small>{status(item.status, item.incoming)}</small>
                       </span>
-                      <ArrowUpRight size={16} />
+                      <ChevronRight size={16} />
                     </button>
                   ))
                 )}
@@ -311,7 +269,7 @@ export default function Connections({
                 <div className="hi-conversation">
                   <header>
                     <div>
-                      <h3>{conversation.display_name}</h3>
+                      <h3 ref={conversationTitle} tabIndex={-1}>{conversation.display_name}</h3>
                       <small>
                         {cityName(conversation.city)} · {conversation.age_band}{" "}
                         · {status(conversation.status, conversation.incoming)}
@@ -320,7 +278,10 @@ export default function Connections({
                     <button
                       className="icon-button"
                       aria-label={t("대화 닫기", "Close conversation")}
-                      onClick={() => h.select(null)}
+                      onClick={() => {
+                        h.select(null);
+                        requestAnimationFrame(() => inboxOpener.current?.focus());
+                      }}
                     >
                       <X size={18} />
                     </button>
@@ -364,8 +325,8 @@ export default function Connections({
                       <p>
                         {conversation.incoming
                           ? t(
-                              "이 인사를 이어가 볼까요?",
-                              "Would you like to say hello back?",
+                              "수락하면 서로 메시지를 보낼 수 있어요.",
+                              "Accept this Hi to exchange messages.",
                             )
                           : t(
                               "상대가 수락하면 대화를 시작할 수 있어요. 요청은 24시간 뒤 만료돼요.",
@@ -436,7 +397,7 @@ export default function Connections({
                         });
                       }}
                     >
-                      <label className="sr-only" htmlFor="hi-message">
+                      <label className="visually-hidden" htmlFor="hi-message">
                         {t("메시지 입력", "Write a message")}
                       </label>
                       <textarea
@@ -445,10 +406,7 @@ export default function Connections({
                         onChange={(e) => setBody(e.target.value)}
                         maxLength={1000}
                         rows={2}
-                        placeholder={t(
-                          "있는 그대로, 한마디.",
-                          "A little hello, in your own words.",
-                        )}
+                        placeholder={t("메시지 입력", "Write a message")}
                         disabled={h.busy}
                       />
                       <button
@@ -461,37 +419,24 @@ export default function Connections({
                       </button>
                     </form>
                   )}
-                  {(
-                    <button
-                      className="text-button hi-safety"
-                      onClick={() => setReporting(true)}
-                    >
-                      {t("차단 · 신고", "Block · Report")}
-                    </button>
-                  )}
+                  <button
+                    className="text-button hi-safety"
+                    onClick={() => setReporting(true)}
+                  >
+                    {t("차단 · 신고", "Block · Report")}
+                  </button>
                 </div>
               )}
             </div>
           )}
         </>
       )}
-      {notice && (
-        <p className="hi-notice" role="status">
-          {notice}
-        </p>
-      )}
-      {h.error != null && (
-        <p className="hi-error" role="alert">
-          {connectError(h.error, en)}
-        </p>
-      )}
-      <p className="hi-footnote">
-        <Globe2 size={14} />
+      {userId && h.prefs?.enabled && <p className="hi-footnote">
         {t(
-          "전 세계로 열려 있어요. 참여 설정은 7일마다 확인해 주세요. 새로운 연결을 꺼도 기존 대화는 유지돼요.",
-          "Open to the world. Renew discovery every 7 days. Pausing discovery keeps existing conversations.",
+          "Hi를 계속 받으려면 7일마다 참여 설정을 갱신해 주세요. 참여를 꺼도 기존 대화는 유지돼요.",
+          "Renew your preferences every 7 days to keep receiving Hi requests. Pausing discovery keeps existing conversations.",
         )}
-      </p>
+      </p>}
       {editing && (
         <Dialog
           title={t("나의 연결 조건", "Your connection preferences")}
@@ -507,8 +452,8 @@ export default function Connections({
                 setEditing(false);
                 setNotice(
                   t(
-                    "조건을 저장했어요. 이제 Hi를 보내 보세요.",
-                    "Preferences saved. You're ready to say Hi.",
+                    "참여 설정을 저장했어요.",
+                    "Preferences saved.",
                   ),
                 );
               });
@@ -516,8 +461,8 @@ export default function Connections({
           >
             <p>
               {t(
-                "성인끼리, 서로 원하는 연결만. 생년월일·성별·선호 조건은 다른 회원에게 공개하지 않아요. 도시와 5년 단위 나이대는 연결된 상대에게 보여요.",
-                "Adults only, with mutual preferences. Birth date, gender and preferences stay private. Connections see your city and five-year age band.",
+                "생년월일·성별·선호 조건은 비공개예요. 연결된 상대에게는 도시와 5년 단위 나이대가 보여요.",
+                "Birth date, gender and preferences stay private. Connections see your city and five-year age band.",
               )}
             </p>
             <label>
@@ -740,6 +685,7 @@ export default function Connections({
                 </option>
               </select>
             </label>
+            {h.error != null && <p className="hi-error" role="alert">{connectError(h.error, en)}</p>}
             <div className="hi-row">
               <button
                 className="dark-button"
