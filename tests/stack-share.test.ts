@@ -215,3 +215,70 @@ test("the Netlify stack handler serves a queued camera video through the existin
     });
   }
 });
+
+test("stack-only media uses the authorized post path or verified certificate and rechecks the grant after storage", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousUrl = process.env.SUPABASE_URL, previousKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_URL = "https://stack-scoped.example";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "local-service-key";
+  const path = "owner/photo.png", bytes = "checked";
+  const digest = (value: string) => createHash("sha256").update(value).digest("hex");
+  const sourceId = randomUUID(), input = digest("capture"), display = digest(bytes), salt = "a".repeat(64);
+  const row = { id:sourceId, media_kind:"video", source_hash:input, display_hash:display, salt, platform:"android",
+    state:"queued", object_path:sourceId+"/media.mp4", commitment:certificateCommitment(sourceId,"video",input,display,salt) };
+  const scopedPost = { ...member, credential:randomUUID(), stackScoped:true, imagePath:path, mimeType:"image/png" };
+  const scopedCertificate = { ...video, sourceId, credential:randomUUID(), stackScoped:true };
+  let revoked = false, revokeDuringDownload = false, corrupt = false, missingReceipt = false;
+  globalThis.fetch = async (input, init) => {
+    const req = new Request(input, init), url = new URL(req.url);
+    if (url.pathname === "/rest/v1/rpc/resolve_work_stack") {
+      const {p_token,p_item} = await req.json();
+      assert.equal(p_token,token);
+      return Response.json({title:"작업",items:revoked ? [] : [scopedPost,scopedCertificate].filter(i=>i.id===p_item)});
+    }
+    if (url.pathname === "/rest/v1/media_certificates") {
+      assert.equal(url.searchParams.get("id"),"eq."+sourceId);
+      assert.equal(url.searchParams.has("share_hash"),false);
+      if (url.searchParams.get("select")==="id") {
+        assert.equal(url.searchParams.get("display_hash"),"eq."+display);
+        return Response.json([{ id:sourceId }]);
+      }
+      return Response.json([{...row, state:missingReceipt ? "minted" : "queued"}]);
+    }
+    if (url.pathname.endsWith("/certificate-media/"+row.object_path)) {
+      if (revokeDuringDownload) revoked = true;
+      return new Response(corrupt ? "wrong" : bytes);
+    }
+    assert.ok(url.pathname.endsWith("/object/sign/captures/"+path));
+    if (req.method === "POST") return Response.json({ signedURL:"/object/sign/captures/"+path+"?token=internal" });
+    assert.equal(req.headers.get("range"),"bytes=0-2");
+    if (revokeDuringDownload) revoked = true;
+    return new Response("png",{status:206,headers:{ "Content-Range":"bytes 0-2/9", "Content-Location":"forbidden" }});
+  };
+  try {
+    const post = () => stackShare(new Request(base+"/media/"+scopedPost.id,{ headers:{ Range:"bytes=0-2" }}));
+    const proof = () => stackShare(new Request(base+"/media/"+scopedCertificate.id+"?certificate=1"));
+    const photo = await post();
+    assert.equal(photo.status,206);
+    assert.equal(photo.headers.get("Content-Type"),"image/png");
+    assert.equal(photo.headers.get("Content-Location"),null);
+    assert.equal(await photo.text(),"png");
+    const verified = await proof();
+    assert.equal(verified.headers.get("X-Display-SHA256"),display);
+    assert.equal(await verified.text(),bytes);
+    corrupt = true;
+    assert.equal((await proof()).status,409);
+    corrupt = false;
+    missingReceipt = true;
+    assert.equal((await proof()).status,409);
+    missingReceipt = false;
+    revokeDuringDownload = true;
+    assert.equal((await proof()).status,404);
+    revoked = false;
+    assert.equal((await post()).status,404);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousUrl === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = previousUrl;
+    if (previousKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY; else process.env.SUPABASE_SERVICE_ROLE_KEY = previousKey;
+  }
+});

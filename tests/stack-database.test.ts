@@ -6,6 +6,23 @@ import { PGlite } from "@electric-sql/pglite";
 import type { StackRef, StackSource, WorkStack } from "../shared/stacks.js";
 import type { PublicStack } from "../server/stack-share.js";
 
+const selectionMigration = "202611190001_work_stack_selection.sql";
+async function migrate(db: PGlite, legacy = false) {
+  await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
+    create schema auth; create table auth.users(id uuid primary key,raw_user_meta_data jsonb);
+    create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+    grant usage on schema auth,public to anon,authenticated,service_role;
+    create schema storage;
+    create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
+    create table storage.objects(id uuid default gen_random_uuid(),bucket_id text,name text,metadata jsonb);
+    alter table storage.objects enable row level security;
+    grant usage on schema storage to anon,authenticated,service_role;
+    grant all on storage.objects to anon,authenticated,service_role;`);
+  const dir = new URL("../supabase/migrations/", import.meta.url);
+  for (const file of (await readdir(dir)).filter(file => file.endsWith(".sql") && (!legacy || file < selectionMigration)).sort())
+    await db.exec(await readFile(new URL(file, dir), "utf8"));
+}
+
 test("ordered owner stacks, grant pinning, retries, conflicts, pagination and cascade across actual SQL roles", async () => {
   const db = new PGlite();
   const owner = randomUUID(), stranger = randomUUID(), stackId = randomUUID();
@@ -29,19 +46,7 @@ test("ordered owner stacks, grant pinning, retries, conflicts, pagination and ca
   const postLink = (item: StackRef, enabled: boolean) =>
     query<string | null>("select public.set_post_share_link($1,$2) as result", [item.id, enabled]);
   try {
-    await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
-      create schema auth; create table auth.users(id uuid primary key,raw_user_meta_data jsonb);
-      create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
-      grant usage on schema auth,public to anon,authenticated,service_role;
-      create schema storage;
-      create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
-      create table storage.objects(id uuid default gen_random_uuid(),bucket_id text,name text,metadata jsonb);
-      alter table storage.objects enable row level security;
-      grant usage on schema storage to anon,authenticated,service_role;
-      grant all on storage.objects to anon,authenticated,service_role;`);
-    const dir = new URL("../supabase/migrations/", import.meta.url);
-    for (const file of (await readdir(dir)).filter(file => file.endsWith(".sql")).sort())
-      await db.exec(await readFile(new URL(file, dir), "utf8"));
+    await migrate(db);
     await db.query("insert into auth.users values ($1,'{}'),($2,'{}')", [owner, stranger]);
     for (const [item, user] of [[post, owner], [extra, owner], [other, stranger]] as const) {
       await db.query(`insert into public.posts(id,user_id,image_path,image_sha256,caption,platform,captured_at)
@@ -98,7 +103,7 @@ test("ordered owner stacks, grant pinning, retries, conflicts, pagination and ca
     await assert.rejects(save("stale", [post], 1), /다른 곳/);
     const reordered = await save("작업 2", [video,extra,post], enabled.revision);
     assert.deepEqual(reordered.items.map(item => item.id), [video.id,extra.id,post.id]);
-    assert.deepEqual(reordered.items.map(item => item.inShare), [false,true,true]);
+    assert.deepEqual(reordered.items.map(item => item.inShare), [false,false,true]);
     const refreshed = await share(true,reordered.revision);
     assert.equal(refreshed.shareToken, token);
     assert.ok(refreshed.items.every(item => item.inShare));
@@ -107,7 +112,11 @@ test("ordered owner stacks, grant pinning, retries, conflicts, pagination and ca
     await db.exec("reset role");
     await db.query("update public.media_certificates set share_hash=repeat('e',64),share_nonce='nonce2' where id=$1", [video.id]);
     await login(owner);
-    const renamed = await save("마지막", [post,extra,video], refreshed.revision);
+    await assert.rejects(save("마지막", [post,extra,video], refreshed.revision), /다른 곳/);
+    await assert.rejects(query("select public.publish_work_stack_selection($1,$2::jsonb,$3)",[
+      stackId,JSON.stringify([post,video]),refreshed.revision]), /다른 곳/);
+    const latest = (await db.query<{stack: WorkStack}>("select public.list_work_stacks() as stack")).rows[0].stack;
+    const renamed = await save("마지막", [post,extra,video], latest.revision);
     assert.deepEqual(renamed.items.map(item => item.inShare), [false,true,false]);
     await role("service_role");
     assert.deepEqual((await resolve(token))!.items.map(item => item.caption), ["after"]);
@@ -131,6 +140,117 @@ test("ordered owner stacks, grant pinning, retries, conflicts, pagination and ca
     await db.query("delete from auth.users where id=$1", [owner]);
     await role("service_role");
     assert.equal(await resolve(again.shareToken!), null);
+  } finally {
+    await db.close();
+  }
+});
+
+test("explicit publication upgrades legacy links, grants only selected members and handles stale or failed changes atomically", async () => {
+  const db = new PGlite();
+  const actor = randomUUID(), stranger = randomUUID(), stack = randomUUID(), second = randomUUID();
+  const ref = (source: StackRef["source"]): StackRef => ({ source, id: randomUUID() });
+  const pinned = ref("post"), privatePost = ref("post"), video = ref("certificate"), later = ref("post");
+  const original = [pinned, privatePost, video];
+  const query = async <T>(sql: string, args: unknown[] = []) => (await db.query<{v:T}>(sql,args)).rows[0]?.v;
+  const role = (name: "anon" | "authenticated" | "service_role") => db.exec("set role " + name);
+  const login = async (id: string) => {
+    await role("authenticated");
+    await db.query("select set_config('request.jwt.claim.sub',$1,false)",[id]);
+  };
+  const save = (id: string, items: StackRef[], revision: number | null) => query<WorkStack>(
+    "select public.save_work_stack($1,'stack',$2::jsonb,$3) v",[id, JSON.stringify(items), revision]);
+  const publish = (id: string, selected: unknown, revision: number | null) => query<WorkStack>(
+    "select public.publish_work_stack_selection($1,$2::jsonb,$3) v",[id,JSON.stringify(selected),revision]);
+  const get = (id: string) => query<WorkStack>("select s v from public.list_work_stacks() s where s->>'id'=$1",[id]);
+  const toggle = (id: string, enabled: boolean, revision: number) => query<WorkStack>(
+    "select public.set_work_stack_share($1,$2,$3) v",[id,enabled,revision]);
+  const link = (item: StackRef, enabled: boolean) => query<string>("select public.set_post_share_link($1,$2) v",[item.id,enabled]);
+  const resolve = (token: string, handle: string | null = null) => query<PublicStack | null>(
+    "select public.resolve_work_stack($1,$2) v",[token,handle]);
+  try {
+    await migrate(db,true);
+    await db.query("insert into auth.users values ($1,'{}'),($2,'{}')",[actor,stranger]);
+    for (const item of [pinned,privatePost,later]) {
+      await db.query(`insert into public.posts(id,user_id,image_path,image_sha256,caption,platform,captured_at)
+        values($1,$2,$3,repeat('1',64),$4,'ios',now())`,[item.id,actor,item.id+".jpg",item.id]);
+      await db.query(`insert into storage.objects(bucket_id,name,metadata) values('captures',$1,'{"mimetype":"image/jpeg"}')`,[item.id+".jpg"]);
+    }
+    await db.query(`insert into public.media_certificates(id,challenge_id,user_id,media_kind,source_hash,display_hash,salt,
+      commitment,platform,state) values($1,gen_random_uuid(),$2,'video',repeat('2',64),repeat('3',64),repeat('4',64),repeat('5',64),'ios','queued')`,[video.id,actor]);
+    await login(actor);
+    const oldStandalone = await link(privatePost,true);
+    await link(privatePost,false);
+    const activeStandalone = await link(pinned,true);
+    await save(stack,original,null);
+    await save(second,original,null);
+    const oldStack = await toggle(stack,true,1), otherStack = await toggle(second,true,1);
+    await db.exec("reset role");
+    await db.exec(await readFile(new URL("../supabase/migrations/"+selectionMigration,import.meta.url),"utf8"));
+    await role("service_role");
+    assert.deepEqual((await resolve(oldStack.shareToken!))!.items.map(i=>i.caption),[pinned.id]);
+    assert.equal(await query("select count(*)::int v from public.resolve_post_share($1)",[activeStandalone]),1);
+    await role("anon");
+    await assert.rejects(publish(stack,[privatePost],oldStack.revision),/permission denied/);
+    await login(stranger);
+    await assert.rejects(publish(stack,[privatePost],oldStack.revision),/찾을 수/);
+    await login(actor);
+    for (const invalid of [null,{},[],[privatePost,privatePost],[privatePost,later],[{id:video.id,source:"post"}],
+      [privatePost,{source:"post",id:"bad"}],Array(101).fill(video)]) {
+      await assert.rejects(publish(stack,invalid,oldStack.revision),/골라|확인/);
+      assert.deepEqual(await get(stack),oldStack);
+    }
+    const shared = await publish(stack,[video,privatePost],oldStack.revision);
+    assert.equal(shared.shareToken,oldStack.shareToken);
+    assert.deepEqual(shared.items.map(i=>[i.shared,i.inShare]),[[true,false],[false,true],[false,true]]);
+    await assert.rejects(toggle(stack,true,shared.revision),/다시 선택/);
+    await assert.rejects(publish(stack,[pinned],oldStack.revision),/다른 곳/);
+    assert.deepEqual(await get(second),otherStack);
+    await role("service_role");
+    const manifest = (await resolve(shared.shareToken!))!;
+    assert.deepEqual(manifest.items.map(i=>i.source),["post","certificate"]);
+    const [photoHandle,videoHandle] = manifest.items.map(i=>i.id);
+    assert.ok(manifest.items.every(i=>!("credential" in i) && !("sourceId" in i) && !("imagePath" in i)));
+    const scoped = (await resolve(shared.shareToken!,photoHandle))!.items[0];
+    assert.equal(scoped.stackScoped,true);
+    assert.equal(scoped.sourceId,privatePost.id);
+    assert.equal(scoped.imagePath,privatePost.id+".jpg");
+    assert.equal(scoped.mimeType,"image/jpeg");
+    assert.equal((await resolve(shared.shareToken!,videoHandle))!.items[0].stackScoped,true);
+    assert.deepEqual((await resolve(otherStack.shareToken!,photoHandle))!.items,[]);
+    assert.equal(await query("select count(*)::int v from public.resolve_post_share($1)",[oldStandalone]),0);
+    assert.equal(await query("select count(*)::int v from public.resolve_post_share($1)",[activeStandalone]),1);
+    assert.equal(await query("select share_hash v from public.media_certificates where id=$1",[video.id]),null);
+    await login(actor);
+    await link(later,true);
+    const reordered = await save(stack,[video,later,pinned,privatePost],shared.revision);
+    assert.deepEqual(reordered.items.map(i=>i.inShare),[true,false,false,true]);
+    // Both editors saw the same revision. Exactly one can publish its entire selection.
+    const writes = await Promise.allSettled([publish(stack,[video],reordered.revision),publish(stack,[pinned],reordered.revision)]);
+    assert.equal(writes.filter(w=>w.status==="fulfilled").length,1);
+    assert.ok(writes.some(w=>w.status==="rejected" && /다른 곳/.test(String(w.reason))));
+    let current = await get(stack);
+    assert.equal(current.items.filter(i=>i.inShare).length,1);
+    current = await publish(stack,[pinned,privatePost,video],current.revision);
+    await link(pinned,false);
+    await link(pinned,true);
+    await assert.rejects(publish(stack,[pinned,privatePost,video],current.revision),/다른 곳/);
+    assert.deepEqual((await get(stack)).items.filter(i=>i.inShare).map(i=>i.id),[video.id,privatePost.id]);
+    await link(privatePost,true);
+    await link(privatePost,false);
+    assert.deepEqual((await get(stack)).items.filter(i=>i.inShare).map(i=>i.id),[video.id]);
+    await db.exec("reset role");
+    await db.query("update public.media_certificates set share_hash=repeat('6',64),share_nonce='one' where id=$1",[video.id]);
+    await db.query("update public.media_certificates set share_hash=null,share_nonce=null where id=$1",[video.id]);
+    await role("service_role");
+    assert.deepEqual((await resolve(shared.shareToken!))!.items,[]);
+    await login(actor);
+    current = await get(stack);
+    const off = await toggle(stack,false,current.revision);
+    const again = await publish(stack,[video],off.revision);
+    assert.notEqual(again.shareToken,shared.shareToken);
+    await role("service_role");
+    assert.equal(await resolve(shared.shareToken!),null);
+    assert.equal((await resolve(again.shareToken!))!.items.length,1);
   } finally {
     await db.close();
   }

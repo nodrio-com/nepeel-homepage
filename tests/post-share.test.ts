@@ -92,21 +92,30 @@ test("only authors can issue and revoke links, old links stay dead after reissue
       insert into public.posts values('${post}','${author}','hello','photo.jpg');
       insert into storage.objects values('captures','photo.jpg','{"mimetype":"image/jpeg"}');`);
     await db.exec(await readFile(new URL("../supabase/migrations/202611180001_post_share_links.sql", import.meta.url), "utf8"));
+    await db.exec(await readFile(new URL("../supabase/migrations/202611190002_post_share_state.sql", import.meta.url), "utf8"));
     const issue = async () => (await db.query<{token: string}>(
       "select public.set_post_share_link($1,true) as token", [post])).rows[0].token;
     const revoke = () => db.query("select public.set_post_share_link($1,false)", [post]);
+    const active = async () => (await db.query<{ active: boolean }>(
+      "select public.has_own_post_share_link($1) as active", [post])).rows[0].active;
     const resolve = (value: string) => db.query("select * from public.resolve_post_share($1)", [value]);
     await db.exec("set role service_role");
     assert.equal((await resolve(token)).rows.length, 0);
     await db.exec("set role anon");
     await assert.rejects(issue, /permission denied/);
+    await assert.rejects(active, /permission denied/);
     await assert.rejects(resolve(token), /permission denied/);
     await db.exec(`set role authenticated; select set_config('request.jwt.claim.sub','${other}',false)`);
     await assert.rejects(issue, /Post unavailable/);
     await assert.rejects(revoke, /Post unavailable/);
     await assert.rejects(db.query("select * from public.post_share_links"), /permission denied/);
     await db.exec(`select set_config('request.jwt.claim.sub','${author}',false)`);
+    assert.equal(await active(), false);
     const first = await issue();
+    assert.equal(await active(), true);
+    await db.exec(`select set_config('request.jwt.claim.sub','${other}',false)`);
+    assert.equal(await active(), false);
+    await db.exec(`select set_config('request.jwt.claim.sub','${author}',false)`);
     assert.match(first, /^[\w-]{43}$/);
     assert.equal(await issue(), first);
     await assert.rejects(resolve(first), /permission denied/);
@@ -115,6 +124,7 @@ test("only authors can issue and revoke links, old links stay dead after reissue
       [{ image_path: "photo.jpg", caption: "hello", mime_type: "image/jpeg" }]);
     await db.exec("set role authenticated");
     await revoke();
+    assert.equal(await active(), false);
     await revoke();
     const next = await issue();
     assert.notEqual(first, next);
