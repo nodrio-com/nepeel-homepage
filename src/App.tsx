@@ -19,13 +19,10 @@ import {
   LoaderCircle,
   LogOut,
   MessageCircle,
-  Plus,
   RefreshCw,
   Search,
   Send,
   ShieldCheck,
-  SlidersHorizontal,
-  Sparkles,
   Trash2,
   UserRound,
   X,
@@ -52,11 +49,11 @@ const Connections = lazy(() => import("./components/Connections"));
 type View = "feed" | "discover" | "saved" | "profile" | "about" | "hi";
 type Modal = "auth" | "camera" | "edit" | "recovery" | "deleteAccount" | null;
 const navigation = [
-  { id: "feed", label: "홈 피드", icon: Home },
-  { id: "discover", label: "발견하기", icon: Compass },
+  { id: "feed", label: "홈", icon: Home },
+  { id: "discover", label: "탐색", icon: Compass },
   { id: "hi", label: "Hi 연결", icon: Send },
-  { id: "saved", label: "저장한 순간", icon: Bookmark },
-  { id: "profile", label: "내 프로필", icon: UserRound },
+  { id: "saved", label: "저장", icon: Bookmark },
+  { id: "profile", label: "프로필", icon: UserRound },
 ] as const;
 const readView = (): View =>
   ["feed", "discover", "saved", "profile", "about", "hi"].includes(
@@ -64,6 +61,7 @@ const readView = (): View =>
   )
     ? (location.hash.slice(1) as View)
     : "feed";
+const sampleTitle = (post: Post) => sampleMeta.find(item => item.id === post.id)?.tag ?? "예시 사진";
 export function readableError(error: unknown) {
   const message =
     error && typeof error === "object" && "message" in error
@@ -82,7 +80,7 @@ export function readableError(error: unknown) {
   return "연결을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.";
 }
 function timeLabel(post: Post) {
-  if (post.sample) return "샘플 사진";
+  if (post.sample) return "예시 사진";
   const minutes = Math.max(
     0,
     Math.floor((Date.now() - Date.parse(post.created_at)) / 60000),
@@ -190,7 +188,10 @@ export default function App() {
   }, [notice]);
   useEffect(() => {
     const onHash = () => {
-      setView(readView());
+      const nextView = readView();
+      setView(nextView);
+      if (nextView !== "discover") { setSearch(""); setSearchDraft(""); }
+      setDetail(null);
       setPostLink(
         location.hash.startsWith("#post/") ? location.hash.slice(6) : "",
       );
@@ -262,7 +263,7 @@ export default function App() {
           : mode;
   const feed = useFeed({
     client: supabase, userId, enabled: authReady && view !== "hi" && view !== "about",
-    scope: view, mode: feedMode, search, postId: postLink, refresh,
+    scope: view, mode: feedMode, search: view === "discover" ? search : "", postId: postLink, refresh,
   });
   const { setPosts, loading, hasMore, nextPage, loadingMore: loadMore } = feed;
   const reloadFeed = feed.reload;
@@ -275,7 +276,7 @@ export default function App() {
   const posts = !userId && authReady
     ? view === "saved" || view === "profile" || (mode === "following" && view === "feed")
       ? []
-      : samplePosts.filter((post) => `${post.caption}${post.display_name}`.includes(search))
+      : samplePosts.filter((post) => view !== "discover" || `${post.caption} ${post.display_name} ${post.username}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
     : feed.posts;
   const go = (next: View) => {
     setSearch("");
@@ -370,7 +371,7 @@ export default function App() {
     location.hash = "feed";
     setRefresh((v) => v + 1);
   };
-  const actions = (post: Post) => (
+  const actions = (post: Post) => post.sample ? null : (
     <div className="post-actions">
       <button
         className={`icon-button ${post.liked ? "liked" : ""}`}
@@ -396,9 +397,8 @@ export default function App() {
         <Send />
       </button>
       <span className="action-spacer" />
-      <span className={`capture-label ${post.sample ? "sample" : ""}`}>
-        {post.sample ? <Info size={13} /> : <ShieldCheck size={13} />}
-        {post.sample ? "미리보기" : "앱 촬영"}
+      <span className="capture-label">
+        <ShieldCheck size={13} /> 앱 촬영
       </span>
       <button
         className={`icon-button ${post.saved ? "saved" : ""}`}
@@ -413,7 +413,10 @@ export default function App() {
   );
   return (
     <>
-      <a className="skip-link" href="#main">
+      <a className="skip-link" href="#main" onClick={(event) => {
+        event.preventDefault();
+        document.getElementById("main")?.focus();
+      }}>
         본문으로 건너뛰기
       </a>
       <div className="site-frame">
@@ -426,7 +429,6 @@ export default function App() {
         >
           <Brand />
         </a>
-        <div className="brand-caption">LESS FAKE. MORE LIFE.</div>
         <nav aria-label="메인 메뉴">
           {navigation.map((item) => (
             <a
@@ -446,21 +448,10 @@ export default function App() {
           ))}
         </nav>
         <button className="capture-button" onClick={() => setModal("camera")}>
-          <Plus size={21} />
-          <span>순간 기록하기</span>
+          <Camera size={21} />
+          <span>앱에서 촬영</span>
           <ArrowUpRight size={17} />
         </button>
-        <div className="sidebar-manifesto">
-          <span className="tiny-label">A LITTLE MORE REAL.</span>
-          <p>
-            만들어낸 장면 대신,
-            <br />
-            살아가는 순간들.
-          </p>
-          <button onClick={() => go("about")}>
-            nepeel의 약속 <ArrowUpRight size={15} />
-          </button>
-        </div>
         <div className="sidebar-bottom">
           {session ? (
             <button className="account-button" onClick={() => go("profile")}>
@@ -477,53 +468,48 @@ export default function App() {
                 <UserRound size={20} />
               </span>
               <span>
-                <b>나답게, 시작하기</b>
-                <small>로그인 / 회원가입</small>
+                <b>로그인</b>
+                <small>또는 회원가입</small>
               </span>
               <ArrowUpRight size={16} />
             </button>
           )}
           <div className="sidebar-foot">
             <span>© 2026 nepeel</span>
-            <span>Made for real life.</span>
+            <button onClick={() => go("about")}>서비스 소개</button>
           </div>
         </div>
       </aside>
       <div className="app-shell">
-        <header className="topbar">
+        <header className={`utility-bar ${view === "discover" ? "show-search" : ""}`}>
           <div className="mobile-brand">
             <a href="#feed" onClick={() => go("feed")} aria-label="nepeel 홈">
               <Brand />
             </a>
           </div>
-          <div className="topbar-note">
-            <span className="live-dot" /> YOUR LIFE. YOUR LENS.
+          <div className="utility-actions">
+            <form className="header-search" role="search" onSubmit={searchSubmit}>
+              <Search aria-hidden="true" size={18} />
+              <input type="search" aria-label="사진과 사람 검색" placeholder="사진과 사람 검색"
+                value={searchDraft} maxLength={80} onChange={e => setSearchDraft(e.target.value)} />
+              <button type="submit" aria-label="검색"><ArrowRight size={18} /></button>
+            </form>
+            <button
+              className="utility-action utility-account"
+              aria-label={session ? "내 프로필" : "로그인"}
+              aria-haspopup={session ? undefined : "dialog"}
+              onClick={() => (session ? go("profile") : setModal("auth"))}
+            >
+              {session ? (
+                <Avatar name={profile?.display_name ?? "나"} size="small" />
+              ) : (
+                <UserRound aria-hidden="true" />
+              )}
+              <span>{session ? "내 프로필" : "로그인"}</span>
+            </button>
           </div>
-          <form className="search-field" onSubmit={searchSubmit} role="search">
-            <Search size={17} />
-            <input
-              aria-label="사람 또는 순간 검색"
-              placeholder="사람, 순간을 찾아보세요"
-              value={searchDraft}
-              maxLength={80}
-              onChange={(e) => setSearchDraft(e.target.value)}
-            />
-            <kbd>↵</kbd>
-          </form>
-          <button
-            className="top-account"
-            onClick={() => (session ? go("profile") : setModal("auth"))}
-          >
-            {session ? (
-              <Avatar name={profile?.display_name ?? "나"} size="small" />
-            ) : (
-              <>
-                함께하기 <ArrowUpRight size={15} />
-              </>
-            )}
-          </button>
         </header>
-        <div className="page-layout">
+        <div className={`page-layout ${view === "feed" && !postLink ? "" : "single-column"}`}>
           <main id="main" tabIndex={-1}>
             {view === "about" ? (
               <About onCamera={() => setModal("camera")} />
@@ -543,137 +529,22 @@ export default function App() {
               </Suspense>
             ) : (
               <>
-                {view === "feed" && !postLink && (
-                  <>
-                    <div className="page-heading">
-                      <div>
-                        <div className="eyebrow">THE REAL SIDE OF SOCIAL</div>
-                        <h1>
-                          있는 그대로, 연결되다
-                          <span className="lime-period">.</span>
-                        </h1>
-                        <p>평범해서 더 소중한, 우리의 오늘.</p>
-                      </div>
-                      <span className="outline-stamp">
-                        YOUR LENS.
-                        <br />
-                        <b>JUST LIFE.</b>
-                      </span>
-                    </div>
-                    <section className="manifesto-banner">
-                      <div>
-                        <span className="tiny-label">
-                          CAPTURED, NOT GENERATED.
-                        </span>
-                        <h2>진짜 순간만 들어올 수 있는 곳.</h2>
-                        <p>
-                          AI 이미지 없이. 갤러리 업로드 없이.
-                          <br className="mobile-break" /> 오직 앱에서 직접 찍은
-                          사진으로.
-                        </p>
-                        <button onClick={() => go("about")}>
-                          우리가 연결되는 방식 <ArrowRight size={16} />
-                        </button>
-                      </div>
-                      <div className="banner-lens" aria-hidden="true">
-                        <Aperture />
-                        <span>
-                          YOUR
-                          <br />
-                          POINT
-                          <br />
-                          OF VIEW.
-                        </span>
-                      </div>
-                    </section>
-                    <section
-                      className="moment-strip"
-                      aria-label="발견할 순간들"
-                    >
-                      <div className="section-line">
-                        <h2>작은 순간, 넓은 세상</h2>
-                        <button onClick={() => go("discover")}>
-                          둘러보기 <ArrowRight size={14} />
-                        </button>
-                      </div>
-                      <div className="moments">
-                        {(preview ? samplePosts : posts)
-                          .slice(0, 4)
-                          .map((post, i) => (
-                            <button
-                              className="moment"
-                              key={post.id}
-                              onClick={() => setDetail(post)}
-                            >
-                              <span className="moment-image">
-                                <img src={post.image_url} alt="" />
-                                <span>
-                                  <ArrowUpRight size={15} />
-                                </span>
-                              </span>
-                              <b>
-                                {post.sample
-                                  ? sampleMeta[i].tag
-                                  : post.display_name}
-                              </b>
-                              <small>
-                                {post.sample ? "샘플 컬렉션" : "새로운 기록"}
-                              </small>
-                            </button>
-                          ))}
-                        {!preview && !posts.length && (
-                          <div className="moment-invite">
-                            <Camera />
-                            <span>오늘의 첫 순간을 남겨보세요.</span>
-                            <button onClick={() => setModal("camera")}>
-                              앱으로 촬영하기 <ArrowUpRight size={15} />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </section>
-                  </>
-                )}
+                {view === "feed" && !postLink && <h1 className="home-title">홈 피드</h1>}
                 {view === "discover" && (
-                  <div className="page-heading">
-                    <div>
-                      <div className="eyebrow">A WORLD THROUGH YOUR LENS</div>
-                      <h1>
-                        발견하기<span className="lime-period">.</span>
-                      </h1>
-                      <p>
-                        {search
-                          ? `“${search}”의 순간들`
-                          : "스크롤 너머, 누군가의 진짜 하루."}
-                      </p>
-                    </div>
-                    <Compass className="heading-icon" />
-                  </div>
+                  <div className="page-heading"><h1>탐색</h1>{preview && <span className="preview-label">예시 사진</span>}</div>
                 )}
                 {view === "saved" && (
-                  <div className="page-heading">
-                    <div>
-                      <div className="eyebrow">KEEP A LITTLE INSPIRATION</div>
-                      <h1>
-                        저장한 순간<span className="lime-period">.</span>
-                      </h1>
-                      <p>다시 꺼내 보고 싶은 장면들을 모아두세요.</p>
-                    </div>
-                    <Bookmark className="heading-icon" />
-                  </div>
+                  <div className="page-heading"><h1>저장한 순간</h1><Bookmark className="heading-icon" /></div>
                 )}
                 {view === "profile" && (
                   <section className="profile-panel">
                     <Avatar name={profile?.display_name ?? "나"} size="large" />
                     <div>
-                      <div className="eyebrow">MY POINT OF VIEW</div>
+                      
                       <h1>
-                        {profile?.display_name ?? "당신의 이야기를 기다려요."}
+                        {profile?.display_name ?? "내 프로필"}
                       </h1>
-                      <p>
-                        {profile?.bio ||
-                          "작은 순간부터, 있는 그대로 남겨보세요."}
-                      </p>
+                      {profile?.bio && <p>{profile.bio}</p>}
                       {session && <small>@{profile?.username}</small>}
                     </div>
                     {session && (
@@ -723,12 +594,14 @@ export default function App() {
                     {view === "feed" && !postLink ? (
                       <>
                         <button
+                          aria-pressed={mode === "all"}
                           className={mode === "all" ? "selected" : ""}
                           onClick={() => setMode("all")}
                         >
-                          모두의 순간
+                          전체
                         </button>
                         <button
+                          aria-pressed={mode === "following"}
                           className={mode === "following" ? "selected" : ""}
                           onClick={() => setMode("following")}
                         >
@@ -741,20 +614,18 @@ export default function App() {
                           ? "내가 남긴 순간"
                           : postLink
                             ? "공유된 순간"
-                            : "모든 순간"}
+                            : search ? `“${search}” 검색 결과` : "모든 순간"}
                       </h2>
                     )}
+                    {view === "discover" && search && <button className="icon-button" aria-label="검색 지우기" onClick={() => { setSearch(""); setSearchDraft(""); }}><X size={18} /></button>}
                   </div>
                   <button
                     className="sort-label"
-                    onClick={() => {
-                      void reloadFeed();
-                      notify("최신 순간을 불러옵니다.");
-                    }}
+                    onClick={() => void reloadFeed()}
                     aria-label="최신순 피드 새로고침"
                     disabled={feed.refreshing || loading}
                   >
-                    <SlidersHorizontal size={14} /> 최신순
+                    <RefreshCw size={16} className={feed.refreshing ? "spin" : ""} /> 새로고침
                   </button>
                 </div>
                 {feed.refreshing && <p className="loading-state" role="status"><LoaderCircle className="spin" /> 최신 순간을 불러오는 중</p>}
@@ -762,19 +633,6 @@ export default function App() {
                   새 사진을 불러오지 못했어요. 기존 사진은 그대로 볼 수 있어요.
                   <button className="text-button" onClick={() => void reloadFeed()}>다시 시도</button>
                 </div>}
-                {preview && (
-                  <div className="preview-note">
-                    <span>
-                      <Info size={14} />
-                      {postLink
-                        ? "이 사진은 로그인한 멤버에게만 보여요."
-                        : "둘러보기 · 실제 회원 게시물이 아닌 샘플 사진입니다."}
-                    </span>
-                    <button onClick={() => setModal("auth")}>
-                      로그인 <ArrowRight size={13} />
-                    </button>
-                  </div>
-                )}
                 {loading || !authReady ? (
                   <div className="loading-state" role="status">
                     <LoaderCircle className="spin" /> 순간들을 불러오는 중
@@ -793,45 +651,17 @@ export default function App() {
                   </div>
                 ) : !posts.length || (postLink && preview) ? (
                   <div className="empty-state">
-                    <Camera />
-                    <h3>
-                      {preview &&
-                      (view === "saved" ||
-                        view === "profile" ||
-                        mode === "following" ||
-                        postLink)
-                        ? "당신의 연결을 시작해 보세요."
-                        : search
-                          ? "아직 발견하지 못한 순간이에요."
-                          : "첫 번째 순간을 기다리고 있어요."}
-                    </h3>
-                    <p>
-                      {preview
-                        ? "로그인하면 같은 계정으로 웹과 앱을 함께 사용할 수 있어요."
-                        : search
-                          ? "다른 단어로 찾아보세요."
-                          : mode === "following"
-                            ? "마음에 드는 사람을 팔로우해 보세요."
-                            : view === "saved"
-                              ? "마음에 드는 사진의 책갈피를 눌러보세요."
-                              : "앱에서 촬영한 사진이 이곳에도 함께 나타납니다."}
-                    </p>
-                    <button
-                      className="dark-button"
-                      onClick={() =>
-                        preview
-                          ? setModal("auth")
-                          : search || mode === "following" || view === "saved"
-                            ? reset()
-                            : setModal("camera")
-                      }
-                    >
-                      {preview
-                        ? "로그인 / 회원가입"
-                        : search || mode === "following" || view === "saved"
-                          ? "모든 순간 보기"
-                          : "순간 기록하기"}
-                      <ArrowUpRight size={16} />
+                    {search ? <Search /> : postLink ? <Info /> : <Camera />}
+                    <h3>{search ? "검색 결과가 없어요" : postLink ? (preview ? "로그인하고 사진 보기" : "사진을 볼 수 없어요") : preview ? "로그인하고 이어보기" : mode === "following" ? "아직 팔로우한 사진이 없어요" : view === "saved" ? "아직 저장한 사진이 없어요" : "아직 사진이 없어요"}</h3>
+                    {postLink && !preview && <p>삭제되었거나 공개 범위가 바뀐 사진이에요.</p>}
+                    <button className="dark-button" onClick={() => {
+                      if (search) { setSearch(""); setSearchDraft(""); }
+                      else if (preview) setModal("auth");
+                      else if (postLink || mode === "following" || view === "saved") reset();
+                      else setModal("camera");
+                    }}>
+                      {search ? "검색 지우기" : preview ? "로그인" : postLink || mode === "following" || view === "saved" ? "모든 순간 보기" : "앱에서 촬영"}
+                      <ArrowRight size={16} />
                     </button>
                   </div>
                 ) : (
@@ -853,37 +683,28 @@ export default function App() {
                             loading="lazy"
                           />
                           <span className="explore-info">
-                            <b>{post.display_name}</b>
-                            <span>
-                              {post.sample ? "미리보기" : "앱 촬영"}{" "}
-                              <ArrowUpRight size={15} />
-                            </span>
+                            <b>{post.sample ? sampleTitle(post) : post.display_name}</b>
                           </span>
                         </button>
                       ) : (
                         <article className="post" key={post.id}>
                           <header className="post-header">
-                            <Avatar name={post.display_name} index={i} />
+                            {post.sample ? <span className="sample-avatar"><Aperture size={21} aria-hidden="true" /></span> : <Avatar name={post.display_name} index={i} />}
                             <div className="post-person">
                               <b>
-                                {post.display_name}
-                                <span>
+                                {post.sample ? sampleTitle(post) : post.display_name}
+                                {!post.sample && <span>
                                   @
                                   {post.username.length > 18
                                     ? post.username.slice(0, 12) + "…"
                                     : post.username}
-                                </span>
+                                </span>}
                               </b>
                               <small>
-                                {post.sample
-                                  ? sampleMeta.find((m) => m.id === post.id)
-                                      ?.location
-                                  : "직접 남긴 순간"}
-                                <i>·</i>
                                 {timeLabel(post)}
                               </small>
                             </div>
-                            {post.user_id !== userId && (
+                            {!post.sample && post.user_id !== userId && (
                               <button
                                 className={`follow-button ${post.following ? "is-following" : ""}`}
                                 onClick={() => void follow(post)}
@@ -925,7 +746,7 @@ export default function App() {
                           <button
                             className={`post-photo ${post.sample ? post.id : ""}`}
                             onClick={() => setDetail(post)}
-                            aria-label={`${post.display_name}의 사진 크게 보기`}
+                            aria-label={`${post.sample ? sampleTitle(post) : post.display_name} 사진 크게 보기`}
                           >
                             <img
                               src={post.image_url}
@@ -934,13 +755,6 @@ export default function App() {
                               }
                               loading={i === 0 ? "eager" : "lazy"}
                             />
-                            <span className="photo-corner">
-                              <Camera size={13} />{" "}
-                              {post.sample ? "SAMPLE MOMENT" : "SHOT ON NEPEEL"}
-                            </span>
-                            <span className="photo-index">
-                              {String(i + 1).padStart(2, "0")} / REAL LIFE
-                            </span>
                           </button>
                           {actions(post)}
                           <div className="post-copy">
@@ -951,18 +765,18 @@ export default function App() {
                               </strong>
                             )}
                             <p>
-                              <b>{post.display_name}</b> {post.caption}
+                              {!post.sample && <b>{post.display_name} </b>}{post.caption}
                             </p>
                             <PhotoPlace post={post} userId={userId} onChange={patch=>patchPost(post.id,patch)}/>
-                            <button
+                            {!post.sample && <button
                               className="comment-link"
                               onClick={() => setDetail(post)}
                             >
                               {post.comment_count
                                 ? `댓글 ${post.comment_count}개 보기`
-                                : "이 순간에 한마디 남기기"}
+                                : "댓글 쓰기"}
                               <ArrowUpRight size={13} />
-                            </button>
+                            </button>}
                           </div>
                         </article>
                       ),
@@ -989,131 +803,27 @@ export default function App() {
                     더 많은 순간 보기
                   </button>
                 )}
-                {!loading && posts.length > 0 && !hasMore && (
-                  <div className="feed-end">
-                    <Aperture size={25} />
-                    <p>화면 밖에도, 좋은 순간이 기다리고 있어요.</p>
-                    <span>GO LIVE A LITTLE.</span>
-                  </div>
-                )}
               </>
             )}
           </main>
-          <aside className="right-rail">
-            <section className="hi-invite-card">
-              <span>A LITTLE HI. A NEW POSSIBILITY.</span>
-              <h2>좋아요, 그다음은 hi.</h2>
-              <p>
-                같은 도시부터 지구 반대편까지.
-                <br />
-                서로의 조건이 맞는 사람과 인사해요.
-              </p>
-              <button className="dark-button" onClick={() => go("hi")}>
-                Hi 연결 시작하기 <ArrowUpRight size={17} />
-              </button>
-            </section>
-            <section className="welcome-card">
-              <div className="card-eyebrow">
-                <span className="live-dot" /> ONLY ON NEPEEL
-              </div>
-              <h2>
-                그럴듯한 세상보다,
-                <br />
-                <span>당신의 진짜 세상.</span>
-              </h2>
-              <p>
-                잘 나온 사진이 아니어도 괜찮아요.
-                <br />
-                직접 마주한 순간이면 충분해요.
-              </p>
-              <button
-                className="dark-button"
-                onClick={() =>
-                  session ? setModal("camera") : setModal("auth")
-                }
-              >
-                {session ? "오늘의 순간 남기기" : "나의 순간 시작하기"}
-                <ArrowUpRight size={17} />
-              </button>
-              <small>
-                <ShieldCheck size={13} /> 웹과 앱, 하나의 계정으로
-              </small>
-            </section>
-            <section className="rules-card">
-              <div className="section-line">
-                <h2>우리의 작은 원칙</h2>
-                <Aperture size={19} />
-              </div>
-              <div className="rule-row">
-                <span>01</span>
-                <div>
-                  <b>직접 찍어요.</b>
-                  <p>nepeel 앱 카메라로만 촬영해요.</p>
-                </div>
-                <Camera size={17} />
-              </div>
-              <div className="rule-row">
-                <span>02</span>
-                <div>
-                  <b>있는 그대로 나눠요.</b>
-                  <p>AI 생성 이미지와 외부 파일은 받지 않아요.</p>
-                </div>
-                <Sparkles size={17} />
-              </div>
-              <div className="rule-row">
-                <span>03</span>
-                <div>
-                  <b>진짜 사람과 연결돼요.</b>
-                  <p>멤버끼리 서로의 일상을 만나요.</p>
-                </div>
-                <UserRound size={17} />
-              </div>
-              <button className="text-button" onClick={() => go("about")}>
-                촬영 확인은 어떻게 하나요? <ArrowRight size={13} />
-              </button>
-            </section>
-            <section className="app-card">
-              <div className="app-card-art" aria-hidden="true">
-                <div className="mini-phone">
-                  <div className="mini-notch" />
-                  <Aperture />
-                  <div className="mini-shutter" />
-                </div>
-                <span className="orbit-label">
-                  GO OUT.
-                  <br />
-                  LOOK UP.
-                  <br />
-                  CAPTURE.
-                </span>
-                <span className="sticker">
-                  IT'S YOUR
-                  <br />
-                  <b>REAL LIFE.</b>
-                </span>
-              </div>
-              <div className="app-card-copy">
-                <div>
-                  <h3>좋은 순간은, 밖에 있으니까.</h3>
-                  <p>앱에서 찍고, 어디서나 연결돼요.</p>
-                </div>
-                <button
-                  className="icon-button"
-                  aria-label="앱 촬영 안내"
-                  onClick={() => setModal("camera")}
-                >
-                  <ArrowUpRight />
+          {view === "feed" && !postLink && <aside className="right-rail">
+            <section className="rail-discover">
+              <div className="section-line"><h2>다른 순간들</h2><button onClick={() => go("discover")}>전체 보기 <ArrowRight size={14} /></button></div>
+              {(preview ? samplePosts : posts).slice(1, 4).map(post => (
+                <button className="rail-moment" key={post.id} onClick={() => setDetail(post)}>
+                  <img src={post.image_url} alt="" loading="lazy" />
+                  <span><b>{post.sample ? sampleMeta.find(item => item.id === post.id)?.tag : post.display_name}</b><small>{post.sample ? "미리보기" : post.caption || "앱 촬영"}</small></span>
+                  <ArrowUpRight size={16} />
                 </button>
-              </div>
+              ))}
+              {!preview && posts.length < 2 && <button className="text-button" onClick={() => go("discover")}>사진 둘러보기 <ArrowRight size={16} /></button>}
             </section>
             <div className="rail-footer">
-              <button onClick={() => go("about")}>
-                서비스 소개 · 커뮤니티 원칙
-              </button>
-              <p>© 2026 nepeel. Keep it real.</p>
-              <span>NO GENERATED MOMENTS.</span>
+              <button onClick={() => go("about")}>서비스 소개 · 커뮤니티 원칙</button>
+              {preview && <a href="https://unsplash.com" target="_blank" rel="noreferrer">예시 사진 · Unsplash</a>}
+              <p>© 2026 nepeel</p>
             </div>
-          </aside>
+          </aside>}
         </div>
       </div>
       </div>
@@ -1131,10 +841,10 @@ export default function App() {
         ))}
         <button
           className="mobile-capture"
-          aria-label="앱으로 순간 기록하기"
+          aria-label="앱에서 촬영"
           onClick={() => setModal("camera")}
         >
-          <Plus />
+          <Camera aria-hidden="true" /><span>촬영</span>
         </button>
         {navigation
           .slice(2)
@@ -1151,6 +861,7 @@ export default function App() {
             </button>
           ))}
       </nav>
+      <footer className="mobile-footer"><button onClick={() => go("about")}>서비스 소개</button></footer>
       {notice && (
         <div className="toast" role="status">
           <Check size={18} />
@@ -1182,7 +893,15 @@ export default function App() {
         />
       )}
       {modal === "recovery" && <Recovery close={() => setModal(null)} />}
-      {detail && (
+      {detail?.sample && (
+        <Dialog title="예시 사진" close={() => setDetail(null)} wide>
+          <figure className="sample-detail">
+            <img src={detail.image_url} alt={detail.caption} />
+            <figcaption>{detail.caption}</figcaption>
+          </figure>
+        </Dialog>
+      )}
+      {detail && !detail.sample && (
         <PostDialog
           post={detail}
           actions={actions(detail)}
