@@ -169,8 +169,6 @@ body:has(.view-discover) .browse-search { display: none; }
 .editorial-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .editorial-actions button { display: inline-flex; align-items: center; gap: 7px; padding-inline: 10px; border-radius: 6px; font-size: 13px; font-weight: 600; }
 .editorial-actions button[aria-pressed=true] { color: var(--accent); }
-.manual-link { display: grid; gap: 8px; }
-.manual-link input { min-height: 44px; width: 100%; }
 .saved-shortcut { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-height: 44px; border-radius: 6px; }
 .saved-shortcut:hover { background: var(--wash); }
 .saved-shortcut[aria-current="page"] { color: var(--accent); }

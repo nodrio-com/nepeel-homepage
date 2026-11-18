@@ -1,14 +1,49 @@
-import { useState } from "react";
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useRef, useState } from "react";
+import { ActivityIndicator, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { supabase } from "./lib/supabase";
 import { authError, authNotice } from "../shared/auth";
 import { useAuthForm } from "../shared/useAuthForm";
+
+function GuestFeedLink({ en, disabled }: { en: boolean; disabled: boolean }) {
+  const [status, setStatus] = useState<"ready" | "opening" | "error">("ready");
+  const nextLaunchAt = useRef(0);
+  const label = en ? "Browse on the web" : "로그인 없이 웹에서 둘러보기";
+
+  async function openFeed() {
+    if (disabled || Date.now() < nextLaunchAt.current) return;
+    nextLaunchAt.current = Infinity;
+    setStatus("opening");
+    try {
+      await Linking.openURL("https://nepeel.com/#feed");
+      // The OS can acknowledge the handoff before the second tap of a double tap.
+      nextLaunchAt.current = Date.now() + 600;
+      setStatus("ready");
+    } catch {
+      nextLaunchAt.current = 0;
+      setStatus("error");
+    }
+  }
+
+  const unavailable = disabled || status === "opening";
+  return <View>
+    <Pressable accessibilityRole="link" accessibilityLabel={label}
+      accessibilityState={{ disabled: unavailable, busy: status === "opening" }}
+      disabled={unavailable} onPress={openFeed}
+      style={({ pressed }) => [s.guestLink, unavailable && s.disabled, pressed && s.pressed]}>
+      <Text style={s.guestText}>{label}</Text>
+    </Pressable>
+    {status === "error" && <Text accessibilityRole="alert" style={s.error}>
+      {en ? "Couldn't open the browser. Try again." : "브라우저를 열 수 없어요. 다시 시도해 주세요."}
+    </Text>}
+  </View>;
+}
 
 export default function AuthScreen({ initialError = false, cameraRequested = false }: { initialError?: boolean; cameraRequested?: boolean }) {
   const [en, setEn] = useState(() => !Intl.DateTimeFormat().resolvedOptions().locale.startsWith("ko"));
   const t = (ko: string, english: string) => en ? english : ko;
   const h = useAuthForm(supabase, process.env.EXPO_PUBLIC_API_URL || "https://nepeel.com");
   const emailOnly = h.mode === "reset" || h.mode === "resend";
+  const signup = h.mode === "signup";
   const button = (label: string, action: () => void, primary = false, disabled = false) => <Pressable
     accessibilityRole="button" accessibilityState={{ disabled: disabled || h.pending }}
     disabled={disabled || h.pending} onPress={action}
@@ -18,15 +53,14 @@ export default function AuthScreen({ initialError = false, cameraRequested = fal
   return <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === "ios" ? "padding" : "height"}>
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.content}>
       <View style={s.row}><Text style={s.brand}>nepeel</Text>{button(en ? "한국어" : "English", () => setEn(!en))}</View>
-      <Text style={s.hero}>LESS FAKE.{"\n"}MORE LIFE.</Text>
-      <Text style={s.muted}>{cameraRequested
-        ? t("로그인하면 카메라가 열려요.", "Sign in to open the camera.")
-        : t("당신이 직접 살아낸 순간으로 연결돼요.", "Connect through moments you lived yourself.")}</Text>
-      {emailOnly ? <Text style={s.title}>{h.mode === "reset" ? t("비밀번호 다시 설정하기", "Reset your password") : t("인증메일 다시 받기", "Resend confirmation")}</Text>
+      {emailOnly ? <Text accessibilityRole="header" style={s.title}>{h.mode === "reset" ? t("비밀번호 다시 설정하기", "Reset your password") : t("인증메일 다시 받기", "Resend confirmation")}</Text>
         : <View style={s.row}>
-          {button(t("로그인", "Sign in"), () => h.change("login"), h.mode === "login")}
-          {button(t("회원가입", "Create account"), () => h.change("signup"), h.mode === "signup")}
+          <Text accessibilityRole="header" style={s.title}>{signup ? t("새 계정", "New account") : t("내 계정", "Your account")}</Text>
+          {signup ? button(t("로그인", "Sign in"), () => h.change("login"))
+            : button(t("회원가입", "Create account"), () => h.change("signup"))}
         </View>}
+      {cameraRequested && !emailOnly && <Text style={s.muted}>{t("로그인하면 카메라가 열려요.", "Sign in to open the camera.")}</Text>}
+      {!cameraRequested && !emailOnly && <GuestFeedLink en={en} disabled={h.pending} />}
       {h.mode === "signup" && <><Text style={s.label}>{t("이름", "Name")}</Text>
         <TextInput style={s.input} accessibilityLabel={t("이름", "Name")} autoComplete="nickname" maxLength={40} value={h.name} onChangeText={h.setName} editable={!h.pending} />
       </>}
@@ -40,7 +74,7 @@ export default function AuthScreen({ initialError = false, cameraRequested = fal
       {h.notice && <Text style={s.notice} accessibilityLiveRegion="polite">{authNotice(h.notice, en)}</Text>}
       {!supabase && <Text style={s.error}>{t("서비스 연결을 준비 중입니다.", "We're preparing the service connection.")}</Text>}
       {h.pending && <ActivityIndicator accessibilityLabel={t("처리 중", "Please wait")}/>}
-      {button(h.mode === "signup" ? t("내 순간 시작하기", "Create account")
+      {button(h.mode === "signup" ? t("가입하기", "Create account")
         : h.mode === "reset" ? t("재설정 링크 받기", "Send recovery link")
         : h.mode === "resend" ? t("인증메일 보내기", "Send confirmation") : t("로그인", "Sign in"),
         () => void h.submit(), true, !supabase || (h.mode !== "login" && h.remaining > 0))}
@@ -53,16 +87,17 @@ export default function AuthScreen({ initialError = false, cameraRequested = fal
   </KeyboardAvoidingView>;
 }
 const s = StyleSheet.create({
-  flex: { flex: 1 }, content: { padding: 24, paddingBottom: 48, gap: 16, width: "100%", maxWidth: 600, alignSelf: "center" },
+  flex: { flex: 1, backgroundColor: "#ffffff" }, content: { padding: 24, paddingBottom: 48, gap: 16, width: "100%", maxWidth: 600, alignSelf: "center" },
   row: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12 },
-  brand: { fontSize: 34, fontWeight: "900", color: "#20221d", flex: 1 },
-  hero: { fontSize: 42, lineHeight: 48, fontWeight: "900", color: "#20221d", marginTop: 20 },
-  title: { fontSize: 25, fontWeight: "800", color: "#20221d" }, label: { fontSize: 15, fontWeight: "700", color: "#20221d" },
-  muted: { color: "#606459", fontSize: 14, lineHeight: 23 },
-  input: { minHeight: 50, borderWidth: 1, borderColor: "#bcc2b3", borderRadius: 10, padding: 12, fontSize: 16, color: "#20221d", backgroundColor: "#fafbf8" },
-  button: { minHeight: 48, padding: 13, borderRadius: 10, borderWidth: 1, borderColor: "#bcc2b3", justifyContent: "center", alignItems: "center" },
-  buttonText: { color: "#20221d", fontSize: 15, fontWeight: "600" }, primary: { backgroundColor: "#20221d", borderColor: "#20221d" },
-  primaryText: { color: "#d4ff3f" }, disabled: { opacity: .45 }, pressed: { opacity: .7 },
+  brand: { fontSize: 32, fontWeight: "900", letterSpacing: -1.2, color: "#20242b", flex: 1 },
+  title: { flexGrow: 1, fontSize: 25, fontWeight: "700", color: "#20242b" }, label: { fontSize: 15, fontWeight: "700", color: "#20242b" },
+  muted: { color: "#626b78", fontSize: 14, lineHeight: 23 },
+  input: { minHeight: 50, borderWidth: 1, borderColor: "#a5aeba", borderRadius: 8, padding: 12, fontSize: 16, color: "#20242b", backgroundColor: "#ffffff" },
+  button: { minHeight: 48, padding: 13, borderRadius: 8, borderWidth: 1, borderColor: "#a5aeba", justifyContent: "center", alignItems: "center" },
+  buttonText: { color: "#20242b", fontSize: 15, fontWeight: "600", textAlign: "center" }, primary: { backgroundColor: "#20242b", borderColor: "#20242b" },
+  primaryText: { color: "#ffffff" }, disabled: { opacity: .45 }, pressed: { opacity: .7 },
+  guestLink: { minHeight: 48, justifyContent: "center", alignSelf: "flex-start" },
+  guestText: { fontSize: 16, fontWeight: "600", color: "#2458d3", textDecorationLine: "underline" },
   error: { color: "#982e20", backgroundColor: "#fff0ed", padding: 14, fontSize: 14, lineHeight: 22 },
-  notice: { color: "#20221d", backgroundColor: "#edf4df", padding: 14, fontSize: 14, lineHeight: 22 },
+  notice: { color: "#20242b", backgroundColor: "#f0f2f5", padding: 14, fontSize: 14, lineHeight: 22 },
 });

@@ -1,0 +1,18 @@
+.share-link-field {
+  display: grid;
+  gap: 12px;
+}
+.share-link-field button { justify-self: end; }
+.share-link-field p { color: var(--muted); font-size: 14px; }
+.share-link-field p:empty { position: absolute; }
+.share-link-field input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--control-line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 16px;
+}

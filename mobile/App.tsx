@@ -4,7 +4,6 @@ import {
   Alert,
   AppState,
   FlatList,
-  Image,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -40,6 +39,8 @@ import AuthScreen from "./AuthScreen";
 import NearbyMoments from "./NearbyMoments";
 import SpatialScreen from "./SpatialScreen";
 import PhotoPlace from "./PhotoPlace";
+import PostActions from "./PostActions";
+import PostMedia from "./PostMedia";
 import type { NearbyPhoto } from "../shared/places";
 import { accountAction } from "../shared/account";
 
@@ -96,6 +97,7 @@ function Social() {
     enabled: ready && !!userId,
     scope: "native-feed",
     mode: focusId ? "all" : mode,
+    mediaFilter: "all",
     search: "",
     postId: focusId ?? "",
   });
@@ -258,28 +260,24 @@ function Social() {
         }}
       />
     );
-  const react = (post: Post, table: "likes" | "bookmarks") =>
-    void action(`${table}-${post.id}`, async () => {
-      const enabled = !(table === "likes" ? post.liked : post.saved);
-      await setReaction(supabase!, table, session.user.id, post.id, enabled);
-      setFeed((old) =>
-        old
-          .map((p) =>
-            p.id === post.id
-              ? {
-                  ...p,
-                  ...(table === "likes"
-                    ? {
-                        liked: enabled,
-                        like_count: Number(p.like_count) + (enabled ? 1 : -1),
-                      }
-                    : { saved: enabled }),
-                }
-              : p,
-          )
-          .filter((p) => !!focusId || mode !== "saved" || p.saved),
-      );
-    });
+  const react = async (post: Post, table: "likes" | "bookmarks") => {
+    const enabled = !(table === "likes" ? post.liked : post.saved);
+    await setReaction(supabase!, table, session.user.id, post.id, enabled);
+    setFeed((old) =>
+      old
+        .map((p) =>
+          p.id === post.id
+            ? {
+                ...p,
+                ...(table === "likes"
+                  ? { liked: enabled, like_count: Number(p.like_count) + (enabled ? 1 : -1) }
+                  : { saved: enabled }),
+              }
+            : p,
+        )
+        .filter((p) => !!focusId || mode !== "saved" || p.saved),
+    );
+  };
   return (
     <View style={s.flex}>
       <View style={s.header}>
@@ -437,7 +435,7 @@ function Social() {
                 {focusId
                   ? "사진이 삭제되었거나 공유가 중단됐을 수 있어요."
                   : mode === "saved"
-                    ? "마음에 드는 사진을 저장해 보세요."
+                    ? "마음에 드는 사진이나 영상을 저장해 보세요."
                     : mode === "following"
                       ? "마음에 드는 사람을 팔로우해 보세요."
                       : "지금 눈앞의 순간을 직접 담아보세요."}
@@ -524,34 +522,11 @@ function Social() {
                 <Text style={s.bold}>···</Text>
               </Pressable>
             </View>
-            <Image
-              source={{ uri: post.image_url }}
-              style={s.photo}
-              accessibilityLabel={post.caption || "직접 촬영한 사진"}
-            />
-            <View style={s.actions}>
-              <Pressable
-                style={s.button}
-                accessibilityLabel="좋아요"
-                onPress={() => react(post, "likes")}
-              >
-                <Text style={post.liked ? s.liked : s.bold}>
-                  {post.liked ? "♥" : "♡"} {post.like_count}
-                </Text>
-              </Pressable>
-              <Pressable style={s.button} onPress={() => setCommentsPost(post)}>
-                <Text>댓글 {post.comment_count}</Text>
-              </Pressable>
-              <View style={s.flex} />
-              <Pressable
-                style={s.button}
-                onPress={() => react(post, "bookmarks")}
-              >
-                <Text style={post.saved ? s.bold : s.muted}>
-                  {post.saved ? "저장됨 ✓" : "저장"}
-                </Text>
-              </Pressable>
-            </View>
+            <PostMedia key={session.user.id + ":" + post.id} post={post} />
+            <PostActions key={session.user.id + ":actions:" + post.id}
+              post={post} userId={session.user.id} currentUser={() => authUser.current}
+              manage={mode === "profile" || !!focusId}
+              react={table => react(post, table)} comment={() => setCommentsPost(post)} />
             <Text style={s.caption}>
               <Text style={s.bold}>{post.display_name} </Text>
               {post.caption}
@@ -909,16 +884,8 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  photo: {
-    width: "100%",
-    aspectRatio: 1,
-    backgroundColor: "#e7e9e1",
-    borderRadius: 12,
-  },
-  actions: { flexDirection: "row", alignItems: "center", marginTop: 5 },
   button: { minHeight: 44, padding: 12, justifyContent: "center" },
   caption: { fontSize: 14, lineHeight: 24, color: "#20221d" },
-  liked: { color: "#c34242", fontWeight: "700" },
   row: { flexDirection: "row", gap: 10, alignItems: "center", marginTop: 8 },
   pill: {
     paddingVertical: 11,

@@ -91,20 +91,23 @@ export function Dialog({
   children,
   close,
   wide = false,
+  opener,
 }: {
   title: string;
   children: ReactNode;
   close: () => void;
   wide?: boolean;
+  opener?: HTMLElement | null;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const restoreFocus = useRef(opener);
   useLayoutEffect(() => {
     const el = ref.current!;
-    const opener = document.activeElement;
+    const previous = restoreFocus.current ?? document.activeElement;
     el.showModal();
     return () => {
       el.close();
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true });
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
     };
   }, []);
   return (
@@ -177,9 +180,19 @@ export default function App() {
   const commentDrafts = useMemo(() => new CommentDrafts(userId), [userId]);
   const hiMessageDrafts = useMemo(() => new HiMessageDrafts(), [userId]);
   const editorialSaves = useEditorialSaves(userId);
-  const [manualLink, setManualLink] = useState("");
-  const [copied, setCopied] = useState("");
-  useEffect(() => { setCopied(""); setManualLink(""); }, [route.open, userId]);
+  const [manualLink, setManualLink] = useState<{ url: string; opener: HTMLElement } | null>(null);
+  const [copied, setCopied] = useState<{ postId: string } | null>(null);
+  const editorialShare = useRef<symbol | null>(null);
+  useLayoutEffect(() => {
+    setCopied(null);
+    setManualLink(null);
+    return () => { editorialShare.current = null; };
+  }, [hash, userId]);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
   const profile = profileState?.id === userId ? profileState : null;
   const notify = (text: string) => setNotice(text);
   useEffect(() => {
@@ -233,7 +246,7 @@ export default function App() {
         setProfile(null);
         setReport(null);
         setDeleting(null);
-        setManualLink("");
+        setManualLink(null);
         if (changedAccount) setCreateAfterLogin(false);
         if (changedAccount) setModal(null);
       }
@@ -426,13 +439,23 @@ export default function App() {
     navigate({ view: view === "saved" ? "saved" : "discover", filter: scopedSearch ? filter : "all", search: searchDraft.trim(), open: "", postId: "" });
     window.scrollTo({ top: 0, behavior: "instant" });
   }
-  async function shareEditorial(post: Post) {
+  function offerManualLink(url: string, opener: HTMLElement) {
+    setManualLink({ url, opener });
+  }
+  async function shareEditorial(post: Post, opener: HTMLButtonElement) {
+    if (editorialShare.current) return;
+    const attempt = Symbol();
+    editorialShare.current = attempt;
+    setCopied(null);
     const url = new URL(browseHash({ view: "feed", filter: "all", search: "", open: post.id, postId: "" }), location.origin + "/").href;
-    const at = location.hash;
-    const result = await deliverMediaLink(url, post.caption);
-    if (location.hash !== at) return;
-    if (result === "copied") setCopied(post.id);
-    if (result === "manual") setManualLink(url);
+    try {
+      const result = await deliverMediaLink(url, post.caption);
+      if (editorialShare.current !== attempt || !opener.isConnected) return;
+      if (result === "copied") setCopied({ postId: post.id });
+      if (result === "manual") offerManualLink(url, opener);
+    } finally {
+      if (editorialShare.current === attempt) editorialShare.current = null;
+    }
   }
   const actions = (post: Post, inFeed = false) => post.sample ? <div className="editorial-actions">
     <button type="button" aria-pressed={editorialSaves.ids.includes(post.id)}
@@ -441,7 +464,10 @@ export default function App() {
         editorialSaves.toggle(post.id);
       }}><Bookmark size={17} fill={editorialSaves.ids.includes(post.id) ? "currentColor" : "none"}/>
       {editorialSaves.ids.includes(post.id) ? "저장됨" : "이 기기에 저장"}</button>
-    <button type="button" onClick={() => void shareEditorial(post)}><Send size={17}/>{copied === post.id ? "링크 복사됨" : "공유"}</button>
+    <button type="button" aria-label="공유" onClick={e => void shareEditorial(post, e.currentTarget)}>
+      {copied?.postId === post.id ? <Check size={17} aria-hidden="true"/> : <Send size={17} aria-hidden="true"/>}
+      <span aria-live="polite">{copied?.postId === post.id ? "링크 복사됨" : "공유"}</span>
+    </button>
   </div> : (
     <div className="post-actions">
       <button
@@ -461,7 +487,6 @@ export default function App() {
       >
         <MessageCircle />{inFeed && Number(post.comment_count) > 0 && <span>{Number(post.comment_count).toLocaleString()}</span>}
       </button>
-      {post.user_id === userId && <OwnerShareActions key={userId + ":" + post.id} postId={post.id} manual={setManualLink} manage={!inFeed} />}
       {post.user_id !== userId && <button className="text-button" disabled={busy.includes("follow-" + post.user_id)}
         aria-pressed={post.following} onClick={() => void follow(post)}>{post.following ? "팔로잉" : "팔로우"}</button>}
       {!inFeed && <button className="icon-button" aria-label={post.user_id === userId ? "게시물 삭제" : "게시물 신고"}
@@ -478,6 +503,7 @@ export default function App() {
       >
         <Bookmark fill={post.saved ? "currentColor" : "none"} />
       </button>
+      {post.user_id === userId && <OwnerShareActions key={userId + ":" + post.id + ":" + hash} postId={post.id} manual={offerManualLink} manage={!inFeed} />}
     </div>
   );
   return (
@@ -647,7 +673,7 @@ export default function App() {
           }}
         />
       )}
-      {manualLink && <PostShareDialog url={manualLink} close={() => setManualLink("")} />}
+      {manualLink && <PostShareDialog url={manualLink.url} opener={manualLink.opener} close={() => setManualLink(null)} />}
       {modal === "camera" && <CameraDialog close={() => setModal(null)} />}
       {modal === "edit" && profile && (
         <EditProfile

@@ -10,6 +10,7 @@ import {
 } from "../../shared/stacks";
 import type { StackCursor, StackRef, StackSource, WorkStack } from "../../shared/stacks";
 import { Dialog } from "../App";
+import { ShareLinkDialog } from "./ShareLinkDialog";
 import { supabase } from "../lib/supabase";
 import { deliverMediaLink } from "../lib/share-link";
 import "./media-stacks.css";
@@ -351,23 +352,20 @@ function StackDetail({ client, stack, manage, selectAll, update, openSettings, c
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
-  const [manual, setManual] = useState("");
+  const [manual, setManual] = useState<{ url: string; opener: HTMLButtonElement } | null>(null);
   const working = useRef(false);
   const active = useRef(true);
-  const manualInput = useRef<HTMLInputElement>(null);
   const included = stack.items.filter(item => item.inShare);
   useEffect(() => {
     active.current = true;
     return () => { active.current = false; };
   }, []);
+
   useEffect(() => {
-    if (!manual) return;
-    const frame = requestAnimationFrame(() => {
-      manualInput.current?.focus();
-      manualInput.current?.select();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [manual]);
+    if (!copied) return;
+    const timeout = window.setTimeout(() => setCopied(false), 2600);
+    return () => window.clearTimeout(timeout);
+  }, [copied]);
 
   function manageSelection() {
     setSelected(new Set((selectAll ? stack.items : included).map(keyOf)));
@@ -379,7 +377,7 @@ function StackDetail({ client, stack, manage, selectAll, update, openSettings, c
     update(result);
     setSelected(new Set(result.items.filter(item => item.inShare).map(keyOf)));
   }
-  async function share(intent: "selected" | "current" | "revoke") {
+  async function share(intent: "selected" | "current" | "revoke", opener: HTMLButtonElement) {
     if (working.current) return;
     working.current = true;
     setBusy(true);
@@ -395,8 +393,9 @@ function StackDetail({ client, stack, manage, selectAll, update, openSettings, c
         return;
       }
       let current = stack;
-      const changed = included.length !== selected.size || included.some(item => !selected.has(keyOf(item)));
-      if (intent === "selected" && (!stack.shareToken || changed)) {
+      // Submitting specific items must check the revision even if the local selection looks unchanged.
+      // The gallery instead shares the existing live link, without publishing any items.
+      if (intent === "selected") {
         const refs = stack.items.filter(item => selected.has(keyOf(item))).map(({ id, source }) => ({ id, source }));
         current = await publishStackSelection(client, stack.id, refs, stack.revision);
         if (!active.current) return;
@@ -406,8 +405,8 @@ function StackDetail({ client, stack, manage, selectAll, update, openSettings, c
       const url = new URL(stackPublicPath(current.shareToken), location.origin).href;
       const result = await deliverMediaLink(url, current.title);
       if (!active.current) return;
-      if (result === "manual") setManual(url);
-      else {
+      if (result === "manual") setManual({ url, opener });
+      else if (result !== "cancelled") {
         if (manage) closeSettings();
         setCopied(result === "copied");
       }
@@ -430,12 +429,13 @@ function StackDetail({ client, stack, manage, selectAll, update, openSettings, c
     {manage ? <section className="ms-share">
       <div className="ms-share-nav">
         <button className="ms-back" disabled={busy} onClick={() => { setError(""); closeSettings(); }}><ArrowLeft />묶음으로</button>
-        {stack.shareToken && <button className="ms-text" disabled={busy} onClick={() => void share("revoke")}>
+        {stack.shareToken && <button className="ms-text" disabled={busy} onClick={event => void share("revoke", event.currentTarget)}>
           <Link2Off size={16} />묶음 링크 끊기
         </button>}
       </div>
       <div className="ms-bar ms-editor-bar"><h2>공유할 항목</h2>
-        <button className="dark-button" disabled={busy || !selected.size} onClick={() => void share("selected")}>
+        <button className="dark-button" disabled={!selected.size} aria-disabled={busy || !selected.size}
+          onClick={event => void share("selected", event.currentTarget)}>
           <Share2 size={17} />{busy ? "처리 중…" : `${selected.size}개 공유`}
         </button>
         {error && <p className="ms-error" role="alert">{error}</p>}
@@ -462,22 +462,22 @@ function StackDetail({ client, stack, manage, selectAll, update, openSettings, c
       <button className="ms-back" disabled={busy} onClick={back}><ArrowLeft />내 묶음</button>
       <Gallery title={stack.title} items={stack.items} feedback={<>
         {error && <p className="ms-error" role="alert">{error}</p>}
-        {copied && <p className="ms-note" role="status">링크를 복사했습니다.</p>}
+        <p className={copied ? "ms-note" : "visually-hidden"} role="status">{copied && "링크 복사됨"}</p>
       </>}>
         <button className="ms-text" disabled={busy} onClick={edit}><Pencil />편집</button>
         {stack.shareToken && (included.length > 0 || !stack.items.length) &&
           <button className="ms-text" disabled={busy} onClick={manageSelection}>공유 관리</button>}
-        {stack.items.length > 0 && <button className="dark-button" disabled={busy}
-          onClick={() => stack.shareToken && included.length ? void share("current") : manageSelection()}>
+        {stack.items.length > 0 && <button className="dark-button" aria-disabled={busy}
+          onClick={event => {
+            if (working.current) return;
+            if (stack.shareToken && included.length) void share("current", event.currentTarget);
+            else manageSelection();
+          }}>
           <Share2 size={17} />{busy ? "공유 중…" : "공유"}
         </button>}
       </Gallery>
     </>}
-    {manual && <Dialog title="링크 복사" close={() => setManual("")}>
-      <label className="ms-field">묶음 링크
-        <input ref={manualInput} type="url" readOnly value={manual} onFocus={e => e.target.select()} />
-      </label>
-    </Dialog>}
+    {manual && <ShareLinkDialog {...manual} close={() => setManual(null)} />}
   </>;
 }
 
