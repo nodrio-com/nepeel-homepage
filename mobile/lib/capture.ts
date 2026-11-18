@@ -3,6 +3,7 @@ import * as AppIntegrity from "@expo/app-integrity";
 import * as SecureStore from "expo-secure-store";
 import * as Crypto from "expo-crypto";
 import { File } from "expo-file-system";
+import { CAPTURE_CERT_MAX_BYTES, certificationPayload, type CertificateMediaKind } from "../../shared/media-certificate";
 import { supabase } from "./supabase";
 import {
   ANDROID_HARDWARE_CHALLENGE_PREFIX,
@@ -76,7 +77,26 @@ export async function captureApi<T>(
   }
 }
 let androidPrepared = false;
-export async function prepareCamera(userId: string): Promise<string | null> {
+const preparations = new Map<string, Promise<string | null>>();
+export function prepareCamera(userId: string) {
+  const key = Platform.OS === "android" ? "android" : userId;
+  const pending = preparations.get(key);
+  if (pending) return pending;
+  const next = prepareDevice(userId).finally(() => preparations.delete(key));
+  preparations.set(key, next);
+  return next;
+}
+
+// Keep App Attest assertions in server-counter order, and keep Android's key alias
+// exclusive from key generation through chain retrieval.
+let attestationTail = Promise.resolve();
+export function withAttestation<T>(operation: () => Promise<T>): Promise<T> {
+  const next = attestationTail.then(operation);
+  attestationTail = next.then(() => undefined, () => undefined);
+  return next;
+}
+
+async function prepareDevice(userId: string): Promise<string | null> {
   if (Platform.OS === "ios") {
     if (!AppIntegrity.isSupported)
       throw new Error(
@@ -88,7 +108,7 @@ export async function prepareCamera(userId: string): Promise<string | null> {
     const challenge = await captureApi<Challenge>({
       action: "challenge",
       purpose: "register",
-    });
+    }, userId);
     const keyId = await AppIntegrity.generateKeyAsync();
     const attestation = await AppIntegrity.attestKeyAsync(
       keyId,
@@ -99,7 +119,7 @@ export async function prepareCamera(userId: string): Promise<string | null> {
       challengeId: challenge.id,
       keyId,
       attestation,
-    });
+    }, userId);
     await SecureStore.setItemAsync(storageKey, keyId);
     return keyId;
   }
@@ -132,23 +152,52 @@ export async function prepareCaptureRequest(
   const file = new File(uri);
   if (!file.exists || file.size > CAPTURE_MAX_BYTES)
     throw new Error("사진은 2MB 이하여야 합니다. 다시 촬영해 주세요.");
+  const hash = await fileHash(file);
+  const cleanCaption = caption.trim();
+  const context = normalizeCaptureContext(selectedContext);
+  const payload = capturePayload(userId, challenge, hash, cleanCaption, context);
+  return {
+    action: "publish",
+    challengeId: challenge.id,
+    caption: cleanCaption,
+    imageBase64: await file.base64(),
+    proof: await captureProof(userId, keyId, payload),
+    context,
+  };
+}
+
+async function fileHash(file: File) {
   const bytes = await file.arrayBuffer();
   const digest = await Crypto.digest(
     Crypto.CryptoDigestAlgorithm.SHA256,
     bytes,
   );
-  const hash = Array.from(new Uint8Array(digest))
+  return Array.from(new Uint8Array(digest))
     .map((n) => n.toString(16).padStart(2, "0"))
     .join("");
-  const cleanCaption = caption.trim();
-  const context = normalizeCaptureContext(selectedContext);
-  const payload = capturePayload(
-    userId,
-    challenge,
-    hash,
-    cleanCaption,
-    context,
-  );
+}
+
+export type MediaKind = CertificateMediaKind;
+export type CertificateStatus = "uploading" | "queued" | "minted";
+export type CertificateReceipt = { id: string; status: CertificateStatus };
+export function certifyFile(userId: string, challenge: Challenge, mediaKind: MediaKind, file: File) {
+  return withAttestation(async () => {
+    if (!file.exists || !file.size || file.size > CAPTURE_CERT_MAX_BYTES)
+      throw new CaptureApiError(400, "촬영 파일을 확인할 수 없어요. 다시 촬영해 주세요.");
+    const keyId = await prepareCamera(userId);
+    const hash = await fileHash(file);
+    const proof = await captureProof(userId, keyId, certificationPayload(userId, challenge, hash, mediaKind));
+    return captureApi<CertificateReceipt>({
+      action: "certify",
+      challengeId: challenge.id,
+      mediaKind,
+      mediaBase64: await file.base64(),
+      proof,
+    }, userId);
+  });
+}
+
+async function captureProof(userId: string, keyId: string | null, payload: string) {
   let proof: CaptureProof;
   if (Platform.OS === "ios" && keyId) {
     proof = {
@@ -196,14 +245,7 @@ export async function prepareCaptureRequest(
       proof = { platform: "android", token };
     }
   } else throw new Error("공식 앱에서 다시 촬영해 주세요.");
-  return {
-    action: "publish",
-    challengeId: challenge.id,
-    caption: cleanCaption,
-    imageBase64: await file.base64(),
-    proof,
-    context,
-  };
+  return proof;
 }
 export function discardPhoto(uri?: string) {
   if (!uri) return;
