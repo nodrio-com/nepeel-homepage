@@ -3,7 +3,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { ApiError, sha256, uuid } from "./validation.js";
 import { required } from "./env.js";
 
-function shareToken(id: string, nonce: string) {
+export function shareToken(id: string, nonce: string) {
   const key = required("CERTIFICATE_LINK_SECRET");
   if (Buffer.byteLength(key) < 32)
     throw new Error("certificate_link_key_too_short");
