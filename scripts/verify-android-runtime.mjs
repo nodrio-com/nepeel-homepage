@@ -4,8 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export async function verifyAndroidRuntime() {
-  const runtime = path.join(root, '.attestation-runtime');
+export async function verifyAndroidRuntime(runtime = path.join(root, '.attestation-runtime')) {
   const manifest = JSON.parse(await readFile(path.join(runtime, 'classpath.json'), 'utf8'));
   const fixture = await readFile(path.join(root, 'server/android-attestation/build/smoke-request.json'), 'utf8');
   const java = path.resolve(runtime, manifest.java);

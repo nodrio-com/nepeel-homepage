@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { cp, mkdir, mkdtemp, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { execFileSync, spawn } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
 import path from 'node:path';
@@ -14,7 +14,6 @@ const pins = JSON.parse(await readFile(path.join(project, 'dependencies.json'), 
 const cache = path.join(root, 'node_modules/.cache/nepeel-attestation');
 const runtime = path.join(root, '.attestation-runtime');
 await mkdir(cache, { recursive: true });
-await mkdir(runtime, { recursive: true });
 
 async function digest(file) {
   const hash = createHash('sha256');
@@ -85,16 +84,35 @@ const names = (await readdir(librarySource)).filter(name => name.endsWith('.jar'
 if (!names.includes('nepeel-android-verifier.jar')) throw new Error('Missing verifier executable');
 const jars = await Promise.all(names.map(async name => ({ name, sha256: await digest(path.join(librarySource, name)) })));
 const fingerprint = createHash('sha256').update(JSON.stringify(jars)).digest('hex');
-const libraryDestination = path.join(runtime, 'lib', fingerprint);
-await mkdir(libraryDestination, { recursive: true });
-for (const { name } of jars) await cp(path.join(librarySource, name), path.join(libraryDestination, name));
-if (linux) await cp(await extract(pins.linuxJre, 'jre'), path.join(runtime, 'java'), { recursive: true, dereference: true });
-await writeFile(path.join(runtime, 'classpath.json'), JSON.stringify({
-  java: linux ? 'java/bin/java' : java,
-  jars: jars.map(({ name }) => `lib/${fingerprint}/${name}`),
-  source: pins.googleVerifier.revision,
-}, null, 2));
-// The upstream source license is outside its generated JAR; retain it in the shipped runtime.
-await cp(path.join(upstream, 'LICENSE'), path.join(runtime, 'GOOGLE-VERIFIER-LICENSE'));
-await verifyAndroidRuntime();
+const staging = await mkdtemp(path.join(project, 'build/bundle-'));
+try {
+  const libraryDestination = path.join(staging, 'lib', fingerprint);
+  await mkdir(libraryDestination, { recursive: true });
+  for (const { name } of jars) await cp(path.join(librarySource, name), path.join(libraryDestination, name));
+  if (linux) {
+    const libraries = names.map(name => path.join(librarySource, name));
+    const analysis = execFileSync(path.join(javaHome, 'bin/jdeps'), [
+      '-J-Xmx768m', '--multi-release', '21', '--ignore-missing-deps',
+      '--print-module-deps', '--class-path', libraries.join(path.delimiter), ...libraries,
+    ], { encoding: 'utf8' });
+    const detected = analysis.trim().split(/\r?\n/).at(-1);
+    if (!detected || !/^\w+(?:[.,]\w+)*$/.test(detected)) throw new Error('Unable to read verifier module dependencies');
+    // Providers and reflective fast paths may have no static import in the JARs.
+    const modules = [...new Set([...detected.split(','), 'jdk.crypto.ec', 'jdk.unsupported', 'java.net.http'])];
+    await run(path.join(javaHome, 'bin/jlink'), ['--add-modules', modules.join(','),
+      '--strip-debug', '--no-header-files', '--no-man-pages', '--compress=zip-6', '--output', path.join(staging, 'java')]);
+  }
+  await writeFile(path.join(staging, 'classpath.json'), JSON.stringify({
+    java: linux ? 'java/bin/java' : java,
+    jars: jars.map(({ name }) => `lib/${fingerprint}/${name}`),
+    source: pins.googleVerifier.revision,
+  }, null, 2));
+  await cp(path.join(upstream, 'LICENSE'), path.join(staging, 'GOOGLE-VERIFIER-LICENSE'));
+  await verifyAndroidRuntime(staging);
+  // Netlify includes this entire generated directory, so stale JREs or JARs must leave with the previous build.
+  await rm(runtime, { recursive: true, force: true });
+  await rename(staging, runtime);
+} finally {
+  await rm(staging, { recursive: true, force: true });
+}
 console.log(`Verified Android attestation runtime: ${jars.length} JARs; ${linux ? 'Linux runtime included' : 'local JDK only'}`);
