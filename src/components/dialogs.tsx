@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { Dialog, readableError } from "../App";
 import { supabase } from "../lib/supabase";
+import { mobileCameraDevice } from "../lib/app-camera";
 import { updateProfile } from "../../shared/data";
 import type { Post, Profile } from "../../shared/types";
 import { reportPost, reportReasons } from "../../shared/account";
@@ -24,14 +25,13 @@ function CertificateExamples() {
 }
 
 export function CameraDialog({ close }: { close: () => void }) {
-  const mobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const mobileDevice = mobileCameraDevice();
   return (
     <Dialog title="앱 카메라" close={close}>
       <div className="camera-availability">
-        <p>사진은 nepeel 모바일 앱에서 촬영하고 게시해요. 현재는 테스트 앱을 설치한 사용자만 촬영할 수 있어요.</p>
+        <p>촬영하려면 휴대전화에 nepeel 테스트 앱이 필요해요.</p>
         {mobileDevice && <a className="dark-button" href="nepeel://camera">
-          <Camera size={17} aria-hidden="true" />설치된 테스트 앱 열기
+          <Camera size={17} aria-hidden="true" />앱 다시 열기
         </a>}
         <CertificateExamples />
       </div>
@@ -52,7 +52,7 @@ export function EditProfile({
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   return (
-    <Dialog title="나를 소개해 주세요." close={close}>
+    <Dialog title="프로필 수정" close={close}>
       <form
         className="form-stack"
         onSubmit={async (e) => {
@@ -117,8 +117,7 @@ export function ReportDialog({
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   return (
-    <Dialog title="이 순간을 신고하기" close={close}>
-      <p className="muted">촬영 원칙에 맞지 않거나 불편한 사진을 알려주세요.</p>
+    <Dialog title="게시물 신고" close={close}>
       <form
         className="form-stack"
         onSubmit={async (e) => {
@@ -164,7 +163,7 @@ export function About({ onCamera }: { onCamera: () => void }) {
       <section>
         <h2>사진 게시</h2>
         <p>nepeel 피드에는 앱 카메라로 직접 찍은 사진을 게시해요. 웹에서는 회원의 사진을 보고, 댓글을 달거나 저장할 수 있어요.</p>
-        <button className="service-link" onClick={onCamera}><Camera size={17} />앱 카메라 안내<ChevronRight size={16} /></button>
+        <button className="service-link" onClick={onCamera}><Camera size={17} />앱에서 촬영<ChevronRight size={16} /></button>
       </section>
       <section>
         <h2>촬영 인증</h2>
