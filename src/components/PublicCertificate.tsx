@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Aperture, Clock3, ShieldCheck } from "lucide-react";
-import { CAPTURE_CERT_MAX_BYTES, exampleToken } from "../../shared/media-certificate";
-import { getCertificateStatus, loadCertificate, sha256, type CertificateProblem } from "../lib/public-certificate";
+import { CAPTURE_CERT_MAX_BYTES } from "../../shared/media-certificate";
+import { getCertificateStatus, loadCertificate, sha256, type CertificateLink, type CertificateProblem } from "../lib/public-certificate";
 import "./public-certificate.css";
 
 type MediaView = {
@@ -56,11 +56,13 @@ function CertificateDetails({ media }: { media: MediaView | null }) {
   </details>;
 }
 
-export default function PublicCertificate({ token }: { token: string }) {
+export default function PublicCertificate({ link }: { link: CertificateLink | null }) {
   const [view, setView] = useState<"loading" | CertificateProblem | MediaView>("loading");
   const [attempt, setAttempt] = useState(0);
   const [playbackError, setPlaybackError] = useState(false);
   useEffect(() => {
+    if (!link) { setView("missing"); return; }
+    const currentLink = link;
     let active: AbortController | undefined;
     let url: string | undefined;
     let nextCheck: number | undefined;
@@ -80,7 +82,7 @@ export default function PublicCertificate({ token }: { token: string }) {
         if (active !== controller || document.hidden) return;
         const deadline = window.setTimeout(() => controller.abort(), 30_000);
         try {
-          const status = await getCertificateStatus(token, controller.signal);
+          const status = await getCertificateStatus(currentLink, controller.signal);
           if (active !== controller) return;
           if (controller.signal.aborted) { stopWith("unavailable"); return; }
           if (typeof status === "string") { stopWith(status); return; }
@@ -112,7 +114,7 @@ export default function PublicCertificate({ token }: { token: string }) {
       active = controller;
       const timer = window.setTimeout(() => controller.abort(), 30_000);
       try {
-        const result = await loadCertificate(token, controller.signal);
+        const result = await loadCertificate(currentLink, controller.signal);
         if (active !== controller) return;
         if (controller.signal.aborted) { setView("unavailable"); return; }
         if (typeof result === "string") { setView(result); return; }
@@ -138,9 +140,9 @@ export default function PublicCertificate({ token }: { token: string }) {
       document.removeEventListener("visibilitychange", refresh);
       window.removeEventListener("pageshow", restore);
     };
-  }, [token, attempt]);
+  }, [link, attempt]);
   const media = typeof view === "object" ? view : null;
-  const sample = exampleToken(token);
+  const sample = Boolean(link?.example);
   const retry = <button className="certificate-retry" onClick={() => setAttempt(value => value + 1)}>다시 확인</button>;
   return <main className="certificate-page">
     <header>

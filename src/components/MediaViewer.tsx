@@ -29,6 +29,19 @@ interface ViewerProps {
 const nativeKeys = 'input, textarea, select, video, audio, [contenteditable]:not([contenteditable="false"]), [role="slider"]';
 const swipeControls = `${nativeKeys}, button, a, label, summary, .viewer-panel`;
 const newCommentId = () => crypto.randomUUID();
+const phoneViewport = "(max-width: 720px), (pointer: coarse) and (max-height: 540px)";
+
+function isolateViewer(viewer: HTMLDialogElement) {
+  const changed: HTMLElement[] = [];
+  for (let branch: HTMLElement | null = viewer; branch && branch !== document.body; branch = branch.parentElement) {
+    for (const sibling of branch.parentElement!.children) {
+      if (sibling === branch || !(sibling instanceof HTMLElement) || sibling.inert || sibling.matches("dialog, script, style, link")) continue;
+      sibling.inert = true;
+      changed.push(sibling);
+    }
+  }
+  return () => { for (const element of changed) element.inert = false; };
+}
 
 function Frame({ post, playThrough, onReady, onEnded, onFailure }: {
   post: Post; playThrough: boolean; onReady: () => void; onEnded: () => void; onFailure: () => void;
@@ -76,9 +89,40 @@ export function PostDialog({
 
   useLayoutEffect(() => {
     const el = dialog.current!;
-    el.showModal();
-    closeButton.current?.focus({ preventScroll: true });
-    return () => el.close();
+    const opener = document.activeElement;
+    const viewport = window.matchMedia(phoneViewport);
+    let release: (() => void) | undefined;
+    function present() {
+      const routed = viewport.matches;
+      if (el.open && routed === !!release) return;
+      // A report, share, or confirmation dialog keeps its place during rotation.
+      const top = [...document.querySelectorAll("dialog:modal")].find(other => other !== el);
+      if (top) return;
+      const active = document.activeElement;
+      const focusTarget = active instanceof HTMLElement && el.contains(active) ? active : closeButton.current;
+      if (el.open) el.close();
+      release?.();
+      release = undefined;
+      el.toggleAttribute("data-routed", routed);
+      if (routed) {
+        // Browser Back should traverse the post route without a native modal dismiss step.
+        el.open = true;
+        release = isolateViewer(el);
+      } else {
+        el.showModal();
+      }
+      focusTarget?.focus({ preventScroll: true });
+    }
+    present();
+    viewport.addEventListener("change", present);
+    el.addEventListener("focusin", present);
+    return () => {
+      viewport.removeEventListener("change", present);
+      el.removeEventListener("focusin", present);
+      release?.();
+      el.close();
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true });
+    };
   }, []);
 
   useLayoutEffect(() => {
@@ -131,6 +175,23 @@ export function PostDialog({
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLDialogElement>) {
+    if (e.currentTarget.hasAttribute("data-routed") && !e.defaultPrevented && !e.nativeEvent.isComposing && !document.fullscreenElement) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        requestClose();
+        return;
+      }
+      if (e.key === "Tab") {
+        const controls = [...e.currentTarget.querySelectorAll<HTMLElement>('button, a[href], input, textarea, select, summary, video[controls], [tabindex]')]
+          .filter(control => !control.matches(":disabled, [tabindex='-1']") && control.getClientRects().length > 0);
+        const edge = e.shiftKey ? controls[0] : controls.at(-1);
+        if (edge && document.activeElement === edge) {
+          e.preventDefault();
+          (e.shiftKey ? controls.at(-1) : controls[0])?.focus({ preventScroll: true });
+        }
+        return;
+      }
+    }
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.nativeEvent.isComposing) return;
     if (!(e.target instanceof Element) || e.target.closest(nativeKeys)) return;
     const move = e.key === "ArrowLeft" ? onPrevious : e.key === "ArrowRight" ? onNext : undefined;
@@ -172,7 +233,7 @@ export function PostDialog({
   }
 
   return (
-    <dialog className="media-viewer" ref={dialog} aria-label={title}
+    <dialog className="media-viewer" ref={dialog} aria-label={title} aria-modal="true"
       onCancel={e => { e.preventDefault(); requestClose(); }}
       onClick={e => { if (e.target === e.currentTarget) requestClose(); }}
       onKeyDown={onKeyDown}>

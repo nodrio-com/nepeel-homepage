@@ -81,7 +81,9 @@ function renderStack(request: Request, stack: PublicStack, token: string) {
       ? `<video src="${path(item)}" controls playsinline preload="metadata" aria-label="${label}"></video>`
       : `<img src="${path(item)}" alt="${label}" loading="${index === 0 && !compare ? "eager" : "lazy"}">`;
     const caption = item.caption ? `<figcaption>${escapeHtml(item.caption)}</figcaption>` : "";
-    return `<li><figure>${media}${caption}</figure></li>`;
+    const certificate = item.source === "certificate"
+      ? `<a class="certificate-link" href="/verify/stack/${token}/${item.id}" aria-label="${label} 촬영 인증서 보기">촬영 인증서 보기</a>` : "";
+    return `<li><figure>${media}${caption}</figure>${certificate}</li>`;
   }).join("");
   return page(request, 200, stack.title, peel + (items ? `<ol aria-label="작업 순서">${items}</ol>` : "<p>공개된 항목이 없어요.</p>"), compare);
 }
@@ -90,7 +92,8 @@ export async function serveStackShare(request: Request, source: StackShareSource
   const missing = () => page(request, 404, "이 링크로 묶음을 볼 수 없어요");
   if (request.method !== "GET" && request.method !== "HEAD")
     return new Response(null, { status: 405, headers: { ...stackHeaders, Allow: "GET, HEAD" } });
-  const match = /^\/stack\/([A-Za-z0-9_-]{43})(?:\/media\/([\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}))?\/?$/.exec(new URL(request.url).pathname);
+  const url = new URL(request.url);
+  const match = /^\/stack\/([A-Za-z0-9_-]{43})(?:\/media\/([\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}))?\/?$/.exec(url.pathname);
   if (!match) return missing();
   const [, token, itemId] = match;
   try {
@@ -99,6 +102,7 @@ export async function serveStackShare(request: Request, source: StackShareSource
     if (!itemId) return renderStack(request, stack, token);
     const item = stack.items[0];
     if (item?.id !== itemId || !item.credential || !item.sourceId) return missing();
+    if (url.searchParams.has("certificate") && item.source !== "certificate") return missing();
     const result = await source.media(request, item);
     if (result.status !== 200 && result.status !== 206 && result.status !== 416) {
       await result.body?.cancel();
@@ -107,12 +111,16 @@ export async function serveStackShare(request: Request, source: StackShareSource
     // Ledger and storage calls can outlive either grant. Check the specific
     // stack and member again before handing back the first byte.
     const latest = (await source.resolve(token, itemId))?.items[0];
-    if (latest?.id !== itemId || latest.credential !== item.credential || latest.sourceId !== item.sourceId) {
+    if (latest?.id !== itemId || latest.credential !== item.credential || latest.sourceId !== item.sourceId || latest.source !== item.source) {
       await result.body?.cancel();
       return missing();
     }
     const headers = new Headers(stackHeaders);
-    for (const name of ["Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"]) {
+    const allowed = ["Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"];
+    // Only complete responses from the certificate verifier attest a digest.
+    if (item.source === "certificate" && result.status === 200)
+      allowed.push("X-Certificate-State", "X-Certificate-Origin", "X-Display-SHA256", "X-Certificate-Tx", "X-Certificate-Token");
+    for (const name of allowed) {
       const value = result.headers.get(name);
       if (value) headers.set(name, value);
     }
