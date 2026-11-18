@@ -20,7 +20,7 @@ export default {
     },
     android: {
       package: "com.nepeel.app",
-      versionCode: 4,
+      versionCode: 8,
       blockedPermissions: [
         "android.permission.RECORD_AUDIO",
         "android.permission.READ_MEDIA_IMAGES",
