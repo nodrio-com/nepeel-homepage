@@ -13,6 +13,7 @@ import type { FeedMode, Post, Profile } from "../shared/types";
 import DeleteAccount from "./components/DeleteAccount";
 import { useEditorialSaves } from "./lib/editorial-saves";
 import { MediaGrid } from "./components/MediaGrid";
+import { HomeFeed } from "./components/HomeFeed";
 import { readBrowseRoute, browseHash, type BrowseRoute, type MediaFilter, type View } from "./lib/browse-route";
 import { PostShareDialog, OwnerShareActions } from "./components/PostShareDialog";
 import { deliverMediaLink } from "./lib/share-link";
@@ -394,7 +395,7 @@ export default function App() {
     if (result === "copied") setCopied(post.id);
     if (result === "manual") setManualLink(url);
   }
-  const actions = (post: Post) => post.sample ? <div className="editorial-actions">
+  const actions = (post: Post, inFeed = false) => post.sample ? <div className="editorial-actions">
     <button type="button" aria-pressed={editorialSaves.ids.includes(post.id)}
       onClick={() => {
         if (view === "saved" && editorialSaves.ids.includes(post.id)) closePost();
@@ -416,17 +417,17 @@ export default function App() {
       <button
         className="icon-button"
         aria-label="댓글 보기"
-        onClick={() => document.getElementById("viewer-comment-input")?.focus()}
+        onClick={() => inFeed ? openPost(post) : document.getElementById("viewer-comment-input")?.focus()}
       >
         <MessageCircle />
       </button>
-      {post.user_id === userId && <OwnerShareActions key={userId + ":" + post.id} postId={post.id} manual={setManualLink} />}
+      {post.user_id === userId && <OwnerShareActions key={userId + ":" + post.id} postId={post.id} manual={setManualLink} manage={!inFeed} />}
       {post.user_id !== userId && <button className="text-button" disabled={busy.includes("follow-" + post.user_id)}
         aria-pressed={post.following} onClick={() => void follow(post)}>{post.following ? "팔로잉" : "팔로우"}</button>}
-      <button className="icon-button" aria-label={post.user_id === userId ? "게시물 삭제" : "게시물 신고"}
+      {!inFeed && <button className="icon-button" aria-label={post.user_id === userId ? "게시물 삭제" : "게시물 신고"}
         onClick={() => post.user_id === userId ? setDeleting(post) : setReport(post)}>
         {post.user_id === userId ? <Trash2 size={16}/> : <Flag size={16}/>}
-      </button>
+      </button>}
       <span className="action-spacer" />
       <button
         className={`icon-button ${post.saved ? "saved" : ""}`}
@@ -472,7 +473,7 @@ export default function App() {
       </header>
       {cameraHelp && <div className="camera-launch-help"><button type="button" className="text-button"
         onClick={() => setModal("camera")}>앱이 열리지 않나요?</button></div>}
-      <main id="main" tabIndex={-1} className={"browse-main view-" + view}>
+      <main id="main" tabIndex={-1} className={"browse-main view-" + view + (view === "feed" && !route.layout ? " stream-mode" : "")}>
         {view !== "profile" && view !== "about" && view !== "hi" && <h1 className="visually-hidden">{labels[view]}</h1>}
         {view === "about" && <About onCamera={openCamera} />}
         {view === "hi" && <Suspense fallback={<p className="loading-state" role="status">연결 불러오는 중…</p>}>
@@ -504,6 +505,10 @@ export default function App() {
         </Suspense> : <p role="status" className="loading-state">묶음 불러오는 중…</p>)}
         {showFeed && <>
           {postLink && <button className="back-link" onClick={() => go("feed")}><ArrowLeft size={16}/> 피드로</button>}
+          {view === "feed" && !postLink && <nav className="home-modes library-tabs" aria-label="홈 보기 방식">
+            <a href={browseHash({ ...route, layout: undefined, open: "" })} aria-current={!route.layout ? "page" : undefined}>피드</a>
+            <a href={browseHash({ ...route, layout: "grid", open: "" })} aria-current={route.layout === "grid" ? "page" : undefined}>그리드</a>
+          </nav>}
           {view === "discover" && <form className="discover-field" role="search" onSubmit={searchSubmit}>
             <Search size={20} aria-hidden="true"/><input type="search" aria-label="탐색 검색어" placeholder="사진, 영상, 사람 검색"
               value={searchDraft} onChange={e=>changeSearch(e.target.value)} maxLength={80}
@@ -516,16 +521,18 @@ export default function App() {
               {([["all", "전체"], ["photo","사진"], ["video","동영상"], ...(view === "feed" ? [["following","팔로잉"]] : [])] as const).map(([key,label]) =>
                 <button type="button" key={key} aria-pressed={filter === key} onClick={() => setFilter(key as MediaFilter)}>{label}</button>)}
             </div>
-            <div className="density-group" aria-label="그리드 간격">
+            {(view !== "feed" || route.layout === "grid") && <div className="density-group" aria-label="그리드 간격">
               <button type="button" aria-label="기본 그리드" aria-pressed={!dense} onClick={() => changeDensity(false)}><Grid2X2 size={18}/></button>
               <button type="button" aria-label="촘촘한 그리드" aria-pressed={dense} onClick={() => changeDensity(true)}><Grid3X3 size={18}/></button>
-            </div>
+            </div>}
           </div>}
           {search && <div className="search-summary"><span>‘{search}’ 검색 결과</span><button aria-label="검색 지우기" onClick={() => go("discover")}><X size={16}/></button></div>}
           {feed.refreshError && <p className="form-error" role="alert">업데이트할 수 없습니다. <button onClick={() => void reloadFeed()}>다시 시도</button></p>}
           {loading || !authReady ? <p className="loading-state" role="status"><LoaderCircle className="spin"/> 불러오는 중…</p>
           : error ? <div className="browse-empty" role="alert"><p>{error}</p><button className="outline-button" onClick={() => void reloadFeed()}>다시 시도</button></div>
-          : posts.length && !(postLink && preview) ? <MediaGrid posts={posts} dense={dense} onOpen={openPost}/>
+          : posts.length && !(postLink && preview) ? (view === "feed" && !route.layout
+            ? <HomeFeed posts={posts} onOpen={openPost} actions={post => actions(post, true)} viewerOpen={!!detail}/>
+            : <MediaGrid posts={posts} dense={dense} onOpen={openPost}/>)
           : <div className="browse-empty">
             <p>{search ? "검색 결과가 없어요." : postLink ? (preview ? "이 게시물은 회원에게만 공개돼요." : "게시물을 볼 수 없어요.") :
               preview && (view === "profile" || filter === "following") ? "로그인하면 " + (filter === "following" ? "팔로잉 피드" : "내 게시물") + "을 볼 수 있어요." :

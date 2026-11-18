@@ -67,6 +67,31 @@ body:has(.view-discover) .browse-search { display: none; }
 .account-menu button:hover { background: var(--wash); }
 .library-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
 .library-tabs a { font-size: 14px; border-bottom: 2px solid transparent; color: var(--muted); font-weight: 650; }
+.home-modes { margin-bottom: 12px; gap: 22px; }
+.home-modes a { justify-content: center; min-width: 44px; font-size: 16px; }
+.browse-main.stream-mode { max-width: calc(960px + 2 * var(--browse-gutter)); }
+.home-stream { display: grid; grid-template-columns: minmax(0, 648px) minmax(0, 1fr); column-gap: clamp(26px, 4vw, 64px); }
+.home-stream .post-header { padding-top: 0; }
+.home-stream .post-person b { overflow-wrap: anywhere; }
+.home-stream .post-person { overflow: hidden; }
+.home-stream .editorial-actions { margin-block: 4px; }
+.home-stream .editorial-actions button:first-child { padding-left: 0; }
+.home-stream .post-actions { flex-wrap: wrap; margin-inline: 0; }
+.home-stream .post-copy > b { display: block; font-size: 16px; }
+.stream-video { display: block; width: 100%; aspect-ratio: 16 / 9; background: var(--ink); border-radius: 10px; }
+.stream-next h2 { margin: 0 0 8px; font-size: 15px; }
+.stream-next .rail-moment { border-top: 1px solid var(--line); }
+.stream-next .rail-moment img { width: 82px; height: 64px; }
+@media (max-width: 850px) {
+  .browse-main.stream-mode { max-width: calc(648px + 2 * var(--browse-gutter)); }
+  .home-stream { display: block; }
+  .stream-next { display: none; }
+}
+@media (max-width: 720px) {
+  .home-stream .feed-list { gap: 20px; }
+  .home-stream .post-photo, .home-stream .stream-video { width: calc(100% + 2 * var(--browse-gutter)); margin-inline: calc(-1 * var(--browse-gutter)); border-radius: 0; }
+  .home-modes { margin-bottom: 8px; }
+}
 .browse-footer { display: flex; gap: 20px; flex-wrap: wrap; align-items: center; padding-block: 18px 28px; }
 .browse-footer a { display: flex; align-items: center; min-height: 44px; color: var(--muted); font-size: 12px; }
 @media (min-width: 1600px) { .media-grid:not(.dense) { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
