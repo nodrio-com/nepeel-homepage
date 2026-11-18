@@ -92,12 +92,18 @@ export function PostDialog({
     const opener = document.activeElement;
     const viewport = window.matchMedia(phoneViewport);
     let release: (() => void) | undefined;
+    let covering: HTMLDialogElement | null = null;
     function present() {
       const routed = viewport.matches;
       if (el.open && routed === !!release) return;
       // A report, share, or confirmation dialog keeps its place during rotation.
-      const top = [...document.querySelectorAll("dialog:modal")].find(other => other !== el);
-      if (top) return;
+      const top = [...document.querySelectorAll<HTMLDialogElement>("dialog:modal")].find(other => other !== el);
+      if (top) {
+        covering?.removeEventListener("close", present);
+        covering = top;
+        covering.addEventListener("close", present, { once: true });
+        return;
+      }
       const active = document.activeElement;
       const focusTarget = active instanceof HTMLElement && el.contains(active) ? active : closeButton.current;
       if (el.open) el.close();
@@ -119,6 +125,7 @@ export function PostDialog({
     return () => {
       viewport.removeEventListener("change", present);
       el.removeEventListener("focusin", present);
+      covering?.removeEventListener("close", present);
       release?.();
       el.close();
       if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true });
