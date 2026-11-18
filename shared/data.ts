@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { FeedMode, Post, Profile } from "./types";
 import { getPhotoDetails } from "./places";
 
+export type FeedMediaFilter = "all" | NonNullable<Post["media_type"]>;
 export interface FeedCursor {
   createdAt: string;
   id: string;
@@ -20,6 +21,7 @@ export async function getFeedPage(
   search = "",
   cursor: FeedCursor | null = null,
   postId?: string,
+  mediaFilter?: FeedMediaFilter,
 ): Promise<FeedPage> {
   if (
     cursor &&
@@ -28,13 +30,20 @@ export async function getFeedPage(
       !Number.isFinite(Date.parse(cursor.createdAt)))
   )
     throw new Error("피드 위치를 확인하지 못했어요. 새로고침해 주세요.");
-  const { data, error } = await client.rpc("get_feed_page", {
+  const params = {
     p_mode: mode,
     p_search: search,
     p_cursor_at: cursor?.createdAt ?? null,
     p_cursor_id: cursor?.id ?? null,
     p_post: postId || null,
-  });
+  };
+  const { data, error } =
+    mediaFilter === undefined
+      ? await client.rpc("get_feed_page", params)
+      : await client.rpc("get_media_feed_page", {
+          ...params,
+          p_media: mediaFilter,
+        });
   if (error) throw error;
   const rows = (data ?? []) as Post[];
   const visible = rows.slice(0, 20);

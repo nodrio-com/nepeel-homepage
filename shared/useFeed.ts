@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SetStateAction } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getFeedPage } from "./data";
-import type { FeedCursor } from "./data";
+import type { FeedCursor, FeedMediaFilter } from "./data";
 import type { FeedMode, Post } from "./types";
 
 interface FeedOptions {
@@ -11,6 +11,7 @@ interface FeedOptions {
   enabled: boolean;
   scope: string;
   mode: FeedMode;
+  mediaFilter?: FeedMediaFilter;
   search: string;
   postId: string;
   refresh?: number;
@@ -60,6 +61,7 @@ export function useFeed({
   enabled,
   scope,
   mode,
+  mediaFilter,
   search,
   postId,
   refresh = 0,
@@ -69,6 +71,7 @@ export function useFeed({
     enabled,
     scope,
     mode,
+    mediaFilter,
     search,
     postId,
     refresh,
@@ -95,7 +98,7 @@ export function useFeed({
       return invalidate;
     }
     setState({ ...empty(key), loading: true });
-    void getFeedPage(client, mode, search, null, postId)
+    void getFeedPage(client, mode, search, null, postId, mediaFilter)
       .then((page) => {
         if (!valid()) return;
         current.cursor = page.cursor;
@@ -115,7 +118,7 @@ export function useFeed({
         if (valid()) current.phase = "idle";
       });
     return invalidate;
-  }, [client, key, userId, enabled, mode, search, postId]);
+  }, [client, key, userId, enabled, mode, mediaFilter, search, postId]);
 
   // A completed mutation belongs to the exact displayed request, including A→B→A navigation.
   const renderedRequest = request.current;
@@ -158,6 +161,7 @@ export function useFeed({
         search,
         current.cursor,
         postId,
+        mediaFilter,
       );
       if (!valid()) return;
       current.cursor = page.cursor;
@@ -187,7 +191,7 @@ export function useFeed({
         );
       }
     }
-  }, [client, userId, enabled, key, mode, search, postId]);
+  }, [client, userId, enabled, key, mode, mediaFilter, search, postId]);
 
   const reload = useCallback(
     async (maxAge = 0) => {
@@ -218,7 +222,14 @@ export function useFeed({
           : old,
       );
       try {
-        const page = await getFeedPage(client, mode, search, null, postId);
+        const page = await getFeedPage(
+          client,
+          mode,
+          search,
+          null,
+          postId,
+          mediaFilter,
+        );
         if (!valid()) return false;
         current.cursor = page.cursor;
         current.more = page.hasMore;
@@ -246,7 +257,7 @@ export function useFeed({
         }
       }
     },
-    [client, userId, enabled, key, mode, search, postId],
+    [client, userId, enabled, key, mode, mediaFilter, search, postId],
   );
 
   const visible =
