@@ -3,7 +3,7 @@ import type { FormEvent, MouseEvent, ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
   Aperture, ArrowDown, ArrowLeft, Bookmark, Camera, Check, Compass, Flag, Grid2X2, Grid3X3,
-  Heart, Home, Layers, LayoutGrid, LoaderCircle, MessageCircle, Minimize2, Rows3, Search, Send, Settings, Trash2, UserRound, UsersRound, X,
+  Heart, Home, Layers, LoaderCircle, MessageCircle, Search, Send, Settings, Trash2, UserRound, UsersRound, X,
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import { editorialTopics, matchesEditorialSearch, sampleMeta, samplePosts } from "./lib/samples";
@@ -137,7 +137,7 @@ const mediaChoices = [["all", "전체"], ["photo", "사진"], ["video", "동영�
 
 export default function App() {
   const [hash, setHash] = useState(() => location.hash);
-  const topicReturn = useRef<{ id: string; scroll: number; hash: string } | null>(null);
+  const topicReturn = useRef<{ id: string; scroll: number; topicScroll?: number; hash: string } | null>(null);
   const route = readBrowseRoute(hash);
   const { view, filter, search, postId: postLink } = route;
   const following = route.audience === "following";
@@ -202,13 +202,20 @@ export default function App() {
     }
   }, [notice]);
   useEffect(() => {
-    const sync = () => setHash(location.hash);
+    const sync = () => {
+      const from = location.hash;
+      if (from.startsWith("#feed?") && new URLSearchParams(from.slice(6)).get("layout") === "grid") {
+        history.replaceState(history.state, "", browseHash(readBrowseRoute(from)));
+      }
+      setHash(location.hash);
+    };
     const onPop = (event: PopStateEvent) => {
       topicReturn.current = event.state?.nepeelTopicReturn ?? null;
       sync();
     };
     window.addEventListener("popstate", onPop);
     window.addEventListener("hashchange", sync);
+    sync();
     return () => {
       window.removeEventListener("popstate", onPop);
       window.removeEventListener("hashchange", sync);
@@ -293,6 +300,8 @@ export default function App() {
     topicReturn.current = null;
     const opener = document.getElementById(target.id);
     if (opener instanceof HTMLAnchorElement) {
+      const topics = opener.closest(".discovery-topics");
+      if (topics && target.topicScroll !== undefined) topics.scrollLeft = target.topicScroll;
       opener.focus({ preventScroll: true });
       window.scrollTo({ top: target.scroll, behavior: "instant" });
     }
@@ -344,9 +353,9 @@ export default function App() {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     history.replaceState({ ...history.state, nepeelTopicReturn: {
-      id: event.currentTarget.id, scroll: window.scrollY, hash: location.hash,
+      id: event.currentTarget.id, scroll: window.scrollY, topicScroll: event.currentTarget.closest(".discovery-topics")?.scrollLeft, hash: location.hash,
     } }, "");
-    navigate({ view: "discover", filter: "all", search: topic, open: "", postId: "" });
+    navigate({ view: "discover", filter: view === "discover" ? filter : "all", search: topic, open: "", postId: "" });
     window.scrollTo({ top: 0, behavior: "instant" });
   }
   function closePost() {
@@ -528,7 +537,7 @@ export default function App() {
               <input type="search" aria-label="사진, 영상, 사람 검색" placeholder="사진, 영상, 사람 검색" maxLength={80}
                 value={searchDraft} onChange={e => changeSearch(e.target.value)} />
             </form>}
-            <a className="mobile-search-link" href="#discover" onClick={e => navClick(e,"discover")} aria-label="검색 열기"><Search size={21} /></a>
+            {!scopedSearch && <a className="mobile-search-link" href="#discover" onClick={e => navClick(e,"discover")} aria-label="검색 열기"><Search size={21} /></a>}
             <a className="saved-shortcut" href="#saved" onClick={e => navClick(e,"saved")} aria-label="저장한 게시물" aria-current={view === "saved" ? "page" : undefined}><Bookmark size={19} fill={view === "saved" ? "currentColor" : "none"} /></a>
             <button className="browse-camera" onClick={openCamera}><Camera size={18} /><span>앱에서 촬영</span></button>
             <button className="browse-account" onClick={() => session ? go("profile") : setModal("auth")} aria-label={session ? "내 프로필" : "로그인"}>
@@ -539,7 +548,7 @@ export default function App() {
       </header>
       {cameraHelp && <div className="camera-launch-help"><button type="button" className="text-button"
         onClick={() => setModal("camera")}>앱이 열리지 않나요?</button></div>}
-      <main id="main" tabIndex={-1} className={"browse-main view-" + view + (view === "feed" && !route.layout ? " stream-mode" : "")}>
+      <main id="main" tabIndex={-1} className={"browse-main view-" + view}>
         {view !== "profile" && view !== "about" && view !== "hi" && <h1 className="visually-hidden">{labels[view]}</h1>}
         {view === "about" && <About onCamera={openCamera} />}
         {view === "hi" && <Suspense fallback={<p className="loading-state" role="status">연결 불러오는 중…</p>}>
@@ -584,43 +593,20 @@ export default function App() {
             }}><X size={17}/></button>}
             <button type="submit">검색</button>
           </form>}
-          {view === "discover" && !search && <nav className="discovery-topics" aria-label="주제별 탐색">
-            {editorialTopics.map(topic => <a key={topic} id={"discover-topic-" + topic} href={browseHash({ view, filter: "all", search: topic, open: "", postId: "" })}
-              onClick={e => openTopic(e, topic)}>{topic}</a>)}
-          </nav>}
           {!postLink && <div className={view === "feed" ? "browse-filters home-controls" : "browse-filters"}>
             <div className="filter-strip" role="group" aria-label="콘텐츠 필터">
               {mediaChoices.map(([key,label]) =>
                 <button type="button" key={key} aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</button>)}
             </div>
-            {view === "feed" ? <>
-              <select className="compact-media-filter" aria-label="콘텐츠 필터" value={filter}
-                onChange={e => setFilter(e.currentTarget.value as MediaFilter)}>
-                {mediaChoices.map(([key,label]) => <option key={key} value={key}>{label}</option>)}
-              </select>
-              <button type="button" className="audience-toggle" aria-pressed={following}
+            {view === "feed" && <button type="button" className="audience-toggle" aria-pressed={following}
                 onClick={() => navigate({ ...route, audience: following ? undefined : "following", open: "" })}>
                 {following ? <Check size={16} aria-hidden="true"/> : <UsersRound size={16} aria-hidden="true"/>} 팔로잉
-              </button>
-              <div className="home-display">
-                {route.layout === "grid" && <button type="button" className="grid-density-toggle"
-                  aria-label="촘촘한 그리드" aria-pressed={dense} onClick={() => changeDensity(!dense)}>
-                  <Minimize2 size={18} aria-hidden="true"/>
-                </button>}
-                <div className="view-switch" role="radiogroup" aria-label="홈 보기 방식">
-                  <label>
-                    <input type="radio" name="home-layout" aria-label="피드 보기" checked={!route.layout}
-                      onChange={() => navigate({ ...route, layout: undefined, open: "" })}/>
-                    <Rows3 size={19} aria-hidden="true"/>
-                  </label>
-                  <label>
-                    <input type="radio" name="home-layout" aria-label="그리드 보기" checked={route.layout === "grid"}
-                      onChange={() => navigate({ ...route, layout: "grid", open: "" })}/>
-                    <LayoutGrid size={19} aria-hidden="true"/>
-                  </label>
-                </div>
-              </div>
-            </> : <div className="density-group" role="group" aria-label="그리드 간격">
+              </button>}
+            {view === "discover" && !search && <nav className="discovery-topics" aria-label="주제별 탐색">
+              {editorialTopics.map(topic => <a key={topic} id={"discover-topic-" + topic} href={browseHash({ view, filter, search: topic, open: "", postId: "" })}
+                onClick={e => openTopic(e, topic)}>{topic}</a>)}
+            </nav>}
+            {(view === "profile" || view === "saved") && <div className="density-group" role="group" aria-label="그리드 간격">
               <button type="button" aria-label="기본 그리드" aria-pressed={!dense} onClick={() => changeDensity(false)}><Grid2X2 size={18}/></button>
               <button type="button" aria-label="촘촘한 그리드" aria-pressed={dense} onClick={() => changeDensity(true)}><Grid3X3 size={18}/></button>
             </div>}
@@ -628,12 +614,12 @@ export default function App() {
           {feed.refreshError && <p className="form-error" role="alert">업데이트할 수 없습니다. <button onClick={() => void reloadFeed()}>다시 시도</button></p>}
           {loading || !authReady ? <p className="loading-state" role="status"><LoaderCircle className="spin"/> 불러오는 중…</p>
           : error ? <div className="browse-empty" role="alert"><p>{error}</p><button className="outline-button" onClick={() => void reloadFeed()}>다시 시도</button></div>
-          : posts.length && !(postLink && preview) ? (view === "feed" && !route.layout
+          : posts.length && !(postLink && preview) ? (view === "feed"
             ? <HomeFeed posts={posts} onOpen={openPost} onTopic={openTopic} actions={post => actions(post, true)} viewerOpen={!!detail}/>
-            : <MediaGrid posts={posts} dense={dense} onOpen={openPost}/>)
+            : <MediaGrid posts={posts} dense={view !== "discover" && dense} onOpen={openPost}/>)
           : <div className="browse-empty">
             <p>{search ? "검색 결과가 없어요." : postLink ? (preview ? "이 게시물은 회원에게만 공개돼요." : "게시물을 볼 수 없어요.") :
-              preview && (view === "profile" || following) ? "로그인하면 " + (following ? "팔로잉 피드" : "내 게시물") + "을 볼 수 있어요." :
+              preview && (view === "profile" || following) ? (following ? "로그인하면 팔로잉 피드를 볼 수 있어요." : "로그인하면 내 게시물을 볼 수 있어요.") :
               filter === "video" ? "표시할 동영상이 없어요." : filter === "photo" ? "표시할 사진이 없어요." : following ? "팔로우한 사람의 게시물이 아직 없어요." :
               view === "saved" ? "저장한 게시물이 없어요." : "표시할 게시물이 없어요."}</p>
             {preview && !search && (postLink || view === "profile" || following) ?

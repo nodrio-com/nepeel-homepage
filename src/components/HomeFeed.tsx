@@ -18,7 +18,6 @@ export function HomeFeed({ posts, onOpen, onTopic, actions, viewerOpen }: Props)
   useEffect(() => {
     if (viewerOpen) playing.current?.pause();
   }, [viewerOpen]);
-  const next = posts.slice(1, 4);
   return <div className="home-stream">
     <div className="feed-list">
       {posts.map((post, index) => {
@@ -50,21 +49,10 @@ export function HomeFeed({ posts, onOpen, onTopic, actions, viewerOpen }: Props)
           {actions(post)}
           <div className="post-copy">
             {Number(post.like_count) > 0 && <strong className="like-count">좋아요 {Number(post.like_count).toLocaleString()}개</strong>}
-            {meta && <b>{meta.title}</b>}
             {post.caption && <p>{post.caption}</p>}
           </div>
         </article>;
       })}
     </div>
-    {next.length > 0 && <aside className="stream-next" aria-label="이어서 보기">
-      <h2>이어서 보기</h2>
-      {next.map(post => {
-        const cover = post.media_type === "video" ? post.poster_url : post.image_url;
-        return <button className="rail-moment" key={post.id} onClick={() => onOpen(post)}>
-          {cover && <img src={cover} alt="" loading="lazy"/>}
-          <span><b>{mediaTitle(post)}</b><small>{post.media_type === "video" ? "동영상" : "사진"} · {post.display_name}</small></span>
-        </button>;
-      })}
-    </aside>}
   </div>;
 }
