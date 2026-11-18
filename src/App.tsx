@@ -155,7 +155,7 @@ export default function App() {
   const [report, setReport] = useState<Post | null>(null);
   const [deleting, setDeleting] = useState<Post | null>(null);
   const [createAfterLogin, setCreateAfterLogin] = useState(false);
-  const openCamera = useAppCamera(() => setModal("camera"));
+  const { openCamera, needsHelp: cameraHelp } = useAppCamera(() => setModal("camera"), view);
   const searchTimer = useRef<number | undefined>(undefined);
   const composingSearch = useRef(false);
   useEffect(() => () => window.clearTimeout(searchTimer.current), [hash]);
@@ -470,6 +470,8 @@ export default function App() {
           </div>
         </div>
       </header>
+      {cameraHelp && <div className="camera-launch-help"><button type="button" className="text-button"
+        onClick={() => setModal("camera")}>앱이 열리지 않나요?</button></div>}
       <main id="main" tabIndex={-1} className={"browse-main view-" + view}>
         {view !== "profile" && view !== "about" && view !== "hi" && <h1 className="visually-hidden">{labels[view]}</h1>}
         {view === "about" && <About onCamera={openCamera} />}
