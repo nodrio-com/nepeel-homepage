@@ -1,0 +1,272 @@
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import type { KeyboardEvent, ReactNode, TouchEvent } from "react";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { ArrowUpRight, ChevronLeft, ChevronRight, Film, Image, ListVideo, Pause, RotateCw, Send, X } from "lucide-react";
+import { useComments } from "../../shared/useComments";
+import type { Post } from "../../shared/types";
+import { Avatar } from "../App";
+import { supabase } from "../lib/supabase";
+import PhotoPlace from "./PhotoPlace";
+import "./media-viewer.css";
+
+interface ViewerProps {
+  post: Post;
+  actions: ReactNode;
+  userId?: string;
+  close: () => void;
+  login: () => void;
+  onComment: () => void;
+  client?: SupabaseClient | null;
+  onDetails?: (patch: Partial<Post>) => void;
+  onPrevious?: () => void;
+  onNext?: () => void;
+  position?: number;
+  total?: number;
+  editorialTitle?: string;
+  credit?: { label: string; url?: string };
+}
+
+const nativeKeys = 'input, textarea, select, video, audio, [contenteditable]:not([contenteditable="false"]), [role="slider"]';
+const swipeControls = `${nativeKeys}, button, a, label, summary, .viewer-panel`;
+const newCommentId = () => crypto.randomUUID();
+
+function Frame({ post, playThrough, onReady, onEnded, onFailure }: {
+  post: Post; playThrough: boolean; onReady: () => void; onEnded: () => void; onFailure: () => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  const video = post.media_type === "video";
+  const description = post.caption || `${post.sample ? "예시" : post.display_name + "의"} ${video ? "영상" : "사진"}`;
+  function fail() {
+    setFailed(true);
+    onFailure();
+  }
+  if (failed) return (
+    <div className="viewer-media-error">
+      <p role="status">{video ? "영상을" : "사진을"} 불러오지 못했어요.</p>
+      <button type="button" onClick={() => setFailed(false)}><RotateCw size={16} aria-hidden="true" />다시 시도</button>
+    </div>
+  );
+  if (video) return (
+    <video src={post.image_url} poster={post.poster_url || undefined}
+      controls playsInline muted autoPlay={playThrough || !window.matchMedia("(prefers-reduced-motion: reduce)").matches}
+      preload="metadata" aria-label={description} onEnded={onEnded} onError={fail} />
+  );
+  return <img src={post.image_url} alt={description} draggable={false} onLoad={onReady} onError={fail} />;
+}
+
+export function PostDialog({
+  post, actions, userId, close, login, onComment, client = supabase, onDetails,
+  onPrevious, onNext, position, total, editorialTitle, credit,
+}: ViewerProps) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const layout = useRef<HTMLDivElement>(null);
+  const commentsBox = useRef<HTMLDivElement>(null);
+  const gesture = useRef<{ id: number; x: number; y: number } | null>(null);
+  const [continuous, setContinuous] = useState(false);
+  const [loadedPhoto, setLoadedPhoto] = useState("");
+  const thread = useComments({ client, userId, postId: post.id, enabled: !post.sample, makeId: newCommentId });
+  const isVideo = post.media_type === "video";
+  const kind = isVideo ? "영상" : "사진";
+  const KindIcon = isVideo ? Film : Image;
+  const title = post.sample ? editorialTitle || `예시 ${kind}` : `${post.display_name}의 순간`;
+  const navigable = !!(onPrevious || onNext || (total && total > 1));
+  const hasNext = !!onNext;
+  const mediaKey = post.id + "|" + post.image_url;
+
+  useLayoutEffect(() => {
+    const el = dialog.current!;
+    el.showModal();
+    closeButton.current?.focus({ preventScroll: true });
+    return () => el.close();
+  }, []);
+
+  useLayoutEffect(() => {
+    gesture.current = null;
+    layout.current?.scrollTo(0, 0);
+  }, [post.id]);
+
+  useEffect(() => {
+    const cancel = () => { gesture.current = null; };
+    const onVisibility = () => {
+      if (document.hidden) {
+        cancel();
+        setContinuous(false);
+        dialog.current?.querySelector("video")?.pause();
+      }
+    };
+    window.addEventListener("blur", cancel);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("blur", cancel);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
+  function advanceIfPlaying() {
+    if (continuous && !thread.posting && !document.hidden) onNext?.();
+  }
+  const advancePhoto = useEffectEvent(advanceIfPlaying);
+  useEffect(() => {
+    if (!hasNext) {
+      setContinuous(false);
+      return;
+    }
+    if (!continuous || isVideo || loadedPhoto !== mediaKey) return;
+    const timeout = window.setTimeout(advancePhoto, 6000);
+    return () => window.clearTimeout(timeout);
+  }, [continuous, hasNext, isVideo, loadedPhoto, mediaKey]);
+
+  function toggleContinuous() {
+    if (continuous) return setContinuous(false);
+    if (!onNext || thread.posting) return;
+    setContinuous(true);
+    const video = dialog.current?.querySelector("video");
+    if (video?.ended) onNext();
+    else if (video?.paused) void video.play().catch(() => setContinuous(false));
+  }
+
+  function requestClose() {
+    if (!thread.posting) close();
+  }
+
+  function onKeyDown(e: KeyboardEvent<HTMLDialogElement>) {
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.nativeEvent.isComposing) return;
+    if (!(e.target instanceof Element) || e.target.closest(nativeKeys)) return;
+    const move = e.key === "ArrowLeft" ? onPrevious : e.key === "ArrowRight" ? onNext : undefined;
+    if (!move || thread.posting) return;
+    e.preventDefault();
+    move();
+  }
+
+  function startSwipe(e: TouchEvent) {
+    gesture.current = null;
+    if (!navigable || thread.posting || e.touches.length !== 1) return;
+    if (!(e.target instanceof Element) || e.target.closest(swipeControls)) return;
+    const touch = e.touches[0];
+    gesture.current = { id: touch.identifier, x: touch.clientX, y: touch.clientY };
+  }
+
+  function trackSwipe(e: TouchEvent) {
+    const start = gesture.current;
+    if (!start) return;
+    const touch = e.touches[0];
+    if (e.touches.length !== 1 || touch.identifier !== start.id ||
+      (Math.abs(touch.clientY - start.y) > 12 && Math.abs(touch.clientY - start.y) > Math.abs(touch.clientX - start.x))) {
+      gesture.current = null;
+    }
+  }
+
+  function endSwipe(e: TouchEvent) {
+    const start = gesture.current;
+    gesture.current = null;
+    if (!start || thread.posting || e.touches.length !== 0) return;
+    const touch = e.changedTouches[0];
+    if (!touch || touch.identifier !== start.id) return;
+    const end = document.elementFromPoint(touch.clientX, touch.clientY);
+    if (!end || end.closest(swipeControls) || !dialog.current?.contains(end)) return;
+    const dx = touch.clientX - start.x;
+    if (Math.abs(dx) >= 52 && Math.abs(dx) >= 1.6 * Math.abs(touch.clientY - start.y)) {
+      (dx < 0 ? onNext : onPrevious)?.();
+    }
+  }
+
+  return (
+    <dialog className="media-viewer" ref={dialog} aria-label={title}
+      onCancel={e => { e.preventDefault(); requestClose(); }}
+      onClick={e => { if (e.target === e.currentTarget) requestClose(); }}
+      onKeyDown={onKeyDown}>
+      <div className="viewer-shell" onTouchStart={startSwipe} onTouchMove={trackSwipe} onTouchEnd={endSwipe}
+        onTouchCancel={() => { gesture.current = null; }}>
+        <header className="viewer-toolbar">
+          <h2><KindIcon size={19} aria-hidden="true" /><span>{post.sample ? title : kind}</span></h2>
+          {navigable && (
+            <nav className="viewer-paging" aria-label="게시물 이동">
+              <button type="button" aria-label="이전 게시물" title="이전 게시물 (←)" aria-disabled={!onPrevious || thread.posting}
+                onClick={() => { if (!thread.posting) onPrevious?.(); }}><ChevronLeft aria-hidden="true" /></button>
+              {position != null && total != null && (
+                <span className="viewer-position" role="status" aria-atomic="true">
+                  <b>{position}</b><span> / </span>{total}
+                </span>
+              )}
+              <button type="button" aria-label="다음 게시물" title="다음 게시물 (→)" aria-disabled={!onNext || thread.posting}
+                onClick={() => { if (!thread.posting) onNext?.(); }}><ChevronRight aria-hidden="true" /></button>
+            </nav>
+          )}
+          <button type="button" className="viewer-close" ref={closeButton} aria-label="닫기" title="닫기 (Esc)" disabled={thread.posting} onClick={requestClose}>
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        <div ref={layout} className={`viewer-layout${post.sample ? " viewer-layout-sample" : ""}`}>
+          <figure className="viewer-stage">
+            <div className="viewer-media"><Frame key={mediaKey} post={post} playThrough={continuous} onReady={() => setLoadedPhoto(mediaKey)}
+              onFailure={() => setContinuous(false)} onEnded={advanceIfPlaying} /></div>
+            {(post.sample || navigable) && (
+              <figcaption className="viewer-caption">
+                {post.sample && <div className="viewer-caption-copy">
+                  {post.caption && <p>{post.caption}</p>}
+                  {(credit || editorialTitle) && <div className="viewer-credit">
+                    {editorialTitle && <small>에디터 픽</small>}
+                    {credit && (credit.url ? (
+                      <a href={credit.url} target="_blank" rel="noopener noreferrer" onFocus={() => setContinuous(false)}>
+                        {credit.label}<ArrowUpRight size={15} aria-hidden="true" />
+                      </a>
+                    ) : <small>{credit.label}</small>)}
+                  </div>}
+                </div>}
+                <div className="viewer-caption-actions">
+                  {navigable && <button type="button" className="viewer-continuous" aria-pressed={continuous}
+                    aria-disabled={!hasNext || thread.posting} onClick={toggleContinuous}>
+                    {continuous ? <Pause size={17} aria-hidden="true" /> : <ListVideo size={18} aria-hidden="true" />}연속 보기
+                  </button>}
+                  {post.sample && actions && <div className="viewer-editorial-actions" onPointerDownCapture={() => setContinuous(false)} onFocusCapture={() => setContinuous(false)}>{actions}</div>}
+                </div>
+              </figcaption>
+            )}
+          </figure>
+          {!post.sample && (
+            <section className="viewer-panel" key={post.id} aria-label="게시물 정보와 댓글" onPointerDownCapture={() => setContinuous(false)} onFocusCapture={() => setContinuous(false)}>
+              <div className="viewer-author">
+                <Avatar name={post.display_name} />
+                <div><h3>{post.display_name}</h3><small>@{post.username}</small></div>
+              </div>
+              {post.caption && <p className="viewer-body">{post.caption}</p>}
+              {actions}
+              <PhotoPlace post={post} userId={userId} onChange={onDetails} client={client} />
+              <h3 className="viewer-comments-title">댓글 <span>{post.comment_count}</span></h3>
+              <div className="comments" ref={commentsBox} aria-busy={thread.loading}>
+                {thread.loading ? <p className="muted" role="status">댓글을 불러오는 중…</p> : thread.comments.map(c => (
+                  <div className="comment" key={c.id}>
+                    <Avatar name={c.profiles.display_name} size="small" />
+                    <p><b>{c.profiles.display_name}</b><span>{c.body}</span></p>
+                  </div>
+                ))}
+                {!thread.loading && !thread.comments.length && !thread.loadError && <p className="muted">첫 번째 댓글을 남겨보세요.</p>}
+              </div>
+              {thread.loadError && <p className="form-error" role="alert">댓글을 불러오지 못했어요.{" "}
+                <button className="text-button" type="button" onClick={thread.reload}>다시 시도</button></p>}
+              {thread.moreError && <p className="form-error" role="alert">이전 댓글을 불러오지 못했어요. 다시 시도해 주세요.</p>}
+              {thread.hasMore && <button type="button" className="outline-button full" disabled={thread.loadingMore} aria-busy={thread.loadingMore}
+                onClick={() => void thread.loadMore()}>{thread.loadingMore ? "이전 댓글을 불러오는 중…" : "이전 댓글 더 보기"}</button>}
+              {thread.postError && <p className="form-error" role="alert">댓글을 남기지 못했어요. 작성한 내용으로 다시 시도해 주세요.</p>}
+              <form className="comment-form" onSubmit={async e => {
+                e.preventDefault();
+                if (!userId) return login();
+                if (await thread.submit()) {
+                  onComment();
+                  commentsBox.current?.scrollTo({ top: 0 });
+                }
+              }}>
+                <input id="viewer-comment-input" aria-label="댓글" placeholder="댓글 남기기…" maxLength={500} value={thread.body}
+                  onChange={e => thread.setBody(e.target.value)} disabled={thread.posting} />
+                <button className="icon-button" aria-label="댓글 게시" disabled={thread.posting || thread.loading || !thread.body.trim()} aria-busy={thread.posting}>
+                  <Send size={19} aria-hidden="true" />
+                </button>
+              </form>
+            </section>
+          )}
+        </div>
+      </div>
+    </dialog>
+  );
+}
