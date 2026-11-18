@@ -12,8 +12,8 @@ export function PostShareDialog({ url, close }: { url: string; close: () => void
   </Dialog>;
 }
 
-export function OwnerShareActions({ postId, manual }: {
-  postId: string; manual: (url: string) => void;
+export function OwnerShareActions({ postId, manual, manage = true }: {
+  postId: string; manual: (url: string) => void; manage?: boolean;
 }) {
   const [active, setActive] = useState(false);
   const [pending, setPending] = useState(false);
@@ -22,11 +22,11 @@ export function OwnerShareActions({ postId, manual }: {
   const busy = useRef(false);
   useEffect(() => {
     const request = ++current.current;
-    if (supabase) void supabase.rpc("has_own_post_share_link", { p_post: postId }).then(({ data }) => {
+    if (manage && supabase) void supabase.rpc("has_own_post_share_link", { p_post: postId }).then(({ data }) => {
       if (current.current === request) setActive(data === true);
     });
     return () => { ++current.current; };
-  }, [postId]);
+  }, [postId, manage]);
 
   async function change(enabled: boolean) {
     if (!supabase || busy.current) return;
@@ -56,7 +56,7 @@ export function OwnerShareActions({ postId, manual }: {
       disabled={pending} onClick={() => void change(true)}>
       {pending ? <LoaderCircle className="spin" /> : message === "링크 복사됨" ? <Check /> : <Send />}
     </button>
-    {active && <button type="button" className="text-button owner-unshare" disabled={pending}
+    {manage && active && <button type="button" className="text-button owner-unshare" disabled={pending}
       onClick={() => void change(false)}><Link2Off size={15} aria-hidden="true" />링크 끊기</button>}
     {message && <span className="owner-share-status" role="status">{message}</span>}
   </>;
