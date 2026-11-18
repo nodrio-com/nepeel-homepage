@@ -41,6 +41,11 @@
   "engines": {
     "node": "24.x"
   },
+  "overrides": {
+    "@xrplf/isomorphic": "1.0.1",
+    "ripple-address-codec": "5.0.0",
+    "ripple-binary-codec": "2.7.0"
+  },
   "allowScripts": {
     "ffmpeg-static": true,
     "esbuild": true,
