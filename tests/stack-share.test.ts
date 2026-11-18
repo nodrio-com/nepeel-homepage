@@ -31,7 +31,8 @@ test("anonymous viewer emits ordered escaped content, a gated Peel comparison, a
   assert.match(html, /<h1>&lt;우리 묶음&gt;<\/h1>/);
   assert.match(html, /&lt;img src=x onerror=&quot;injected&quot;&gt;/);
   assert.ok(!html.includes(otherToken) && !html.includes(member.sourceId!));
-  assert.doesNotMatch(html, /https?:\/\/|\/s\/|\/verify\/|<img src=x/);
+  assert.doesNotMatch(html, /https?:\/\/|\/s\/|\/verify\/(?!stack\/)|<img src=x/);
+  assert.deepEqual([...html.matchAll(/href="(\/verify\/[^"]+)"/g)].map(match => match[1]), [`/verify/stack/${token}/${video.id}`]);
   assert.match(html, /<video[^>]+controls playsinline/);
   assert.match(html, /type="range"/);
   const list = html.split("<ol")[1];
@@ -42,6 +43,24 @@ test("anonymous viewer emits ordered escaped content, a gated Peel comparison, a
   assert.doesNotMatch(await one.text(), /type="range"|<script>/);
   const empty = await serveStackShare(new Request(base), { ...source, async resolve() { return { title: "A", items: [] }; } });
   assert.match(await empty.text(), /공개된 항목이 없어요/);
+});
+
+test("certificate views reject ordinary items and proof headers cannot cross over from ordinary media or error responses", async () => {
+  const headers = { "Content-Type":"image/jpeg", "X-Certificate-State":"minted", "X-Certificate-Origin":"ios",
+    "X-Display-SHA256":"a".repeat(64), "X-Certificate-Tx":"B".repeat(64), "X-Certificate-Token":"C".repeat(64) };
+  let status = 200, calls = 0;
+  const gate = { ...source, async media() { calls++; return new Response(null,{ status,headers }); } };
+  const ordinary = base + "/media/" + member.id;
+  const proof = base + "/media/" + video.id + "?certificate=1";
+  assert.equal((await serveStackShare(new Request(ordinary + "?certificate=1"),gate)).status,404);
+  assert.equal(calls,0);
+  assert.equal((await serveStackShare(new Request(ordinary),gate)).headers.get("X-Certificate-State"),null);
+  const verified = await serveStackShare(new Request(proof,{method:"HEAD"}),gate);
+  for (const [key,value] of Object.entries(headers)) assert.equal(verified.headers.get(key),value);
+  status = 409;
+  const mismatch = await serveStackShare(new Request(proof),gate);
+  assert.equal(mismatch.status,409);
+  assert.equal(mismatch.headers.get("X-Display-SHA256"),null);
 });
 
 test("stack and member gates are rechecked after media verification including HEAD and byte ranges", async () => {
@@ -164,18 +183,31 @@ test("the Netlify stack handler serves a queued camera video through the existin
     return new Response(damaged ? "bad" : bytes);
   };
   try {
+    const proof = endpoint + "?certificate=1";
+    for (const method of ["GET","HEAD"]) {
+      const checked = await stackShare(new Request(proof,{method}));
+      assert.equal(checked.status,200);
+      assert.equal(checked.headers.get("X-Certificate-State"),"queued");
+      assert.equal(checked.headers.get("X-Certificate-Origin"),"ios");
+      assert.equal(checked.headers.get("X-Display-SHA256"),display);
+      assert.equal(checked.headers.get("X-Certificate-Tx"),null);
+      assert.equal(checked.headers.get("X-Certificate-Token"),null);
+      assert.equal(await checked.text(),method === "GET" ? bytes : "");
+    }
     const get = () => stackShare(new Request(endpoint, { headers: { Range: "bytes=2-5" } }));
     const ok = await get();
     assert.equal(ok.status,206);
     assert.equal(ok.headers.get("content-range"),"bytes 2-5/12");
     assert.equal(ok.headers.get("content-type"),"video/mp4");
+    assert.equal(ok.headers.get("X-Display-SHA256"),null);
     assert.equal(await ok.text(),bytes.slice(2,6));
     damaged = true;
     assert.equal((await get()).status,409);
     damaged = false;
     stillShared = false;
     assert.equal((await get()).status,404);
-    assert.equal(downloads,3);
+    assert.equal((await stackShare(new Request(proof,{method:"HEAD"}))).status,404);
+    assert.equal(downloads,4);
   } finally {
     globalThis.fetch = previousFetch;
     settings.forEach((name, i) => {
