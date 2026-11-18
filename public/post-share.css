@@ -1,0 +1,31 @@
+:root {
+  color: #20242b;
+  background: #fff;
+  font-family: "Noto Sans KR", system-ui, sans-serif;
+  line-height: 1.55;
+}
+* { box-sizing: border-box; }
+body, figure { margin: 0; }
+main { max-width: 704px; margin: 0 auto; padding: 16px clamp(16px, 4vw, 32px) 40px; }
+header { border-bottom: 1px solid #e3e7ed; padding: 4px 0 16px; }
+.brand {
+  font: 900 32px/1 Arial, sans-serif;
+  letter-spacing: -.04em;
+}
+.status { color: #626b78; font-size: .875rem; margin: 16px 0 10px; }
+.photo, video {
+  display: block;
+  width: 100%;
+  max-height: 72svh;
+  object-fit: contain;
+  background: #f4f6f8;
+  border-radius: 12px;
+}
+video { background: #20242b; }
+figcaption { margin-top: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+h1 { font-size: 1.5rem; line-height: 1.4; margin-top: 30px; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+::selection { background: #eaf0ff; color: #20242b; }

@@ -36,7 +36,7 @@ type VerifyProof = (
   payload: string,
 ) => Promise<Counter>;
 
-const verifyProof: VerifyProof = async (client, userId, proof, payload) => {
+export const verifyCaptureProof: VerifyProof = async (client, userId, proof, payload) => {
   if (proof.platform === "android") {
     await androidCaptureProof(proof, payload);
     return;
@@ -77,7 +77,7 @@ export async function publishPhoto(
   client: SupabaseClient,
   userId: string,
   body: Record<string, unknown>,
-  verify: VerifyProof = verifyProof,
+  verify: VerifyProof = verifyCaptureProof,
 ): Promise<{ id: string }> {
   const challengeId = uuid(body.challengeId);
   const proof = body.proof as Record<string, unknown> | undefined;

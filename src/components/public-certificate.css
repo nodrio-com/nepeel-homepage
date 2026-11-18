@@ -1,0 +1,40 @@
+.certificate-page {
+  width: min(100% - 32px, 640px);
+  margin: 0 auto;
+  padding-block: 24px 48px;
+  overflow-wrap: anywhere;
+}
+.certificate-page > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.certificate-page .brand { min-height: 44px; }
+.certificate-page h1 { font-size: 24px; }
+.certificate-provenance { margin: 16px 0 0; color: var(--ink); font-weight: 650; }
+.certificate-provenance + .certificate-media { margin-top: 12px; }
+.certificate-media { margin-top: 24px; background: var(--page); border-radius: var(--radius); overflow: hidden; }
+.certificate-media :is(img, video) { display: block; width: 100%; max-height: 64vh; object-fit: contain; }
+.certificate-media p { padding: 16px; }
+.certificate-media a { color: var(--accent); text-decoration: underline; }
+.certificate-status { margin-top: 24px; }
+.certificate-status h2 { display: flex; align-items: center; gap: 8px; font-size: 20px; margin-bottom: 8px; }
+.certificate-status svg { color: var(--accent); width: 22px; }
+.certificate-status p, .certificate-details p { color: var(--muted); line-height: 1.65; word-break: keep-all; }
+.certificate-retry { margin-top: 12px; padding: 8px 16px; border: 1px solid var(--control-line); border-radius: 8px; }
+.certificate-retry:hover { background: var(--wash); }
+.certificate-details { margin-top: 24px; border-top: 1px solid var(--line); }
+.certificate-details summary { cursor: pointer; padding-block: 14px; font-weight: 600; }
+.certificate-details dl { margin: 4px 0 24px; }
+.certificate-details dt, .certificate-details label { font-size: 14px; font-weight: 600; }
+.certificate-details dd { margin: 4px 0 16px; font-family: ui-monospace, monospace; color: var(--muted); }
+.certificate-details dd a { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; font: 600 15px/1.5 "Noto Sans KR", sans-serif; color: var(--accent); text-decoration: underline; }
+.certificate-details input { display: block; max-width: 100%; min-height: 44px; margin-top: 4px; padding-block: 8px; }
+@media (min-width: 761px) {
+  .certificate-page { padding-top: 32px; }
+  .certificate-page h1 { font-size: 28px; }
+}
