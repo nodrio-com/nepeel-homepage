@@ -94,9 +94,9 @@
   position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0;
   cursor: ew-resize; touch-action: pan-y;
 }
-.ms-note, .ms-status { color: var(--muted); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.ms-note { color: var(--muted); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
 .ms-note { margin-block: 10px; }
-.ms-status:not(:empty), .ms-error { margin-block: 12px; }
+.ms-error { margin-block: 12px; }
 .ms-error { font-size: 14px; line-height: 1.65; color: #943326; }
 .ms-error button { display: inline-flex; margin-left: 4px; color: var(--ink); }
 .ms-covers { grid-template-columns: repeat(auto-fill, minmax(min(43%, 225px), 1fr)); gap: 20px 12px; }
@@ -114,13 +114,24 @@
 .ms-cover-count-3 { grid-template-columns: 1.8fr 1fr; grid-template-rows: repeat(2, minmax(0, 1fr)); }
 .ms-cover-count-3 > :first-child { grid-row: span 2; }
 .ms-editor fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
-.ms-block { margin-top: 24px; }
-.ms-block h3 { margin-bottom: 10px; }
-.ms-block h3 span { color: var(--muted); font-size: 14px; font-weight: 500; margin-left: 3px; }
-.ms-order > li, .ms-share-list > li {
+.ms-editor-bar { position: sticky; top: 0; z-index: 2; padding-block: 6px; background: var(--paper); }
+.ms-editor-bar .ms-error { flex-basis: 100%; margin: 0; }
+.ms-picker-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 8px; margin-bottom: 6px; }
+.ms-picker-heading h3 span { color: var(--muted); font-size: 14px; font-weight: 500; margin-left: 4px; white-space: nowrap; }
+.ms-picker-heading [aria-expanded="true"] svg { transform: rotate(180deg); }
+.ms-options { display: grid; gap: 12px; margin-bottom: 16px; }
+.ms-editor :is(button, input):focus-visible, .ms-share-list label { scroll-margin-top: 76px; }
+.ms-order > li, .ms-share-list label {
   display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center;
   gap: 8px; padding-block: 6px; min-height: 58px; border-bottom: 1px solid var(--line);
 }
+.ms-share-list label { cursor: pointer; grid-template-columns: 44px minmax(0, 1fr) 26px; }
+.ms-select-all {
+  display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+  min-height: 44px; padding-right: 5px; font-size: 14px; font-weight: 600; border-bottom: 1px solid var(--line);
+}
+.ms-share-list input, .ms-select-all input { width: 21px; height: 21px; margin: 0; accent-color: var(--accent); }
+.ms-share-list .ms-item-name { min-width: 0; }
 .ms-order-cover { width: 44px; aspect-ratio: 1; border-radius: 6px; }
 .ms-order-cover .ms-kind, .ms-cover .ms-kind { font-size: 0; gap: 0; }
 .ms-item-name { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -135,14 +146,12 @@
 .ms-picker .ms-tile[aria-pressed="true"]::after { content: ""; position: absolute; inset: 0; border: 3px solid var(--accent); border-radius: inherit; }
 .ms-pick-mark { top: 6px; right: 6px; min-width: 24px; min-height: 24px; justify-content: center; border-radius: 6px; padding: 4px; font-size: 12px; }
 .ms-tile[aria-pressed="true"] .ms-pick-mark { background: var(--accent); }
-.ms-save { margin-top: 18px; }
-.ms-share-state { display: block; margin-top: 2px; color: var(--muted); font-size: 13px; }
-.ms-share .ms-field, .ms-share > .ms-actions { margin-top: 18px; }
+.ms-share-nav { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
 .ms-sr { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
 @media (max-width: 380px) {
   .ms-order > li { grid-template-columns: 36px minmax(0, 1fr) auto; gap: 5px; }
   .ms-order-cover { width: 36px; }
-  .ms-share-list > li { grid-template-columns: 36px minmax(0, 1fr) auto; gap: 5px; }
+  .ms-share-list label { grid-template-columns: 36px minmax(0, 1fr) 26px; gap: 5px; }
   .ms-compare-fields { gap: 6px; }
 }
 @media (max-width: 600px) {
