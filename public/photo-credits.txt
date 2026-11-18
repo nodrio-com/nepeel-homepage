@@ -1,21 +1,50 @@
-NEPEEL — SAMPLE PHOTOGRAPHY
+nepeel 에디터 픽 · 사진과 영상 출처
 
-The photographs on this website are illustrative Unsplash stock photographs.
-They are not generated images, nepeel user posts, or evidence of nepeel capture verification.
-No affiliation or endorsement by the depicted people or photographers is implied.
+편집부가 고른 공개 작품입니다. 각 작품의 원본과 이용 조건은 아래에서 확인할 수 있습니다.
 
-001 / A LITTLE EVERYDAY
-https://images.unsplash.com/photo-1524504388940-b1c1722653e1
+멜트 페스티벌의 밤 · concert.webp
+Yvette de Wit, “Stage light front of audience”
+https://unsplash.com/photos/NYrVisodQ2M
+Unsplash License · https://unsplash.com/license
+웹용 WebP로 크기와 형식을 변경했습니다.
 
-002 / SOMEWHERE SUNNY
-https://images.unsplash.com/photo-1507525428034-b723cf961d3e
+노란 레일을 넘어서 · skate.mp4, skate.webp
+Italo Bicca, “Skater Doing Tricks On a Skate Park”
+https://www.pexels.com/video/skater-doing-tricks-on-a-skate-park-6553306/
+Pexels License · https://www.pexels.com/license/
+9초 영상을 30fps H.264로 변환하고 무음 트랙을 제외했습니다. 미리보기는 원본 영상의 한 프레임입니다.
 
-003 / AFTER DARK
-https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3
+몽콕의 저녁 · mong-kok.webp
+Benh LIEU SONG, “Mong Kok Neon Signs Night”
+https://commons.wikimedia.org/wiki/File:Mong_Kok_Neon_Signs_Night_(48127904386).jpg
+CC BY-SA 2.0 · https://creativecommons.org/licenses/by-sa/2.0/
+크기를 줄여 WebP로 변환했습니다. 변환본에도 같은 라이선스가 적용됩니다.
 
-004 / OFF THE MAP
+라브카의 물레 · pottery.webp, pottery-rim.webp
+Piotrus, “Potter in Rabka 04” 및 “Potter in Rabka 05”
+2008년 5월 23일 폴란드 라브카즈드루이에서 촬영한 사진 두 장입니다.
+물레 위의 손 · https://commons.wikimedia.org/wiki/File:Potter_in_Rabka_04.JPG
+물레 위의 흙 · https://commons.wikimedia.org/wiki/File:Potter_in_Rabka_05.JPG
+CC BY-SA 3.0 · https://creativecommons.org/licenses/by-sa/3.0/
+두 사진의 크기를 줄여 WebP로 변환했습니다. 각 변환본에도 같은 라이선스가 적용됩니다.
+
+붉은 바위 사이로 · roadtrip.webp
+Unsplash 원본 이미지
 https://images.unsplash.com/photo-1500530855697-b586d89ba3ee
+Unsplash License · https://unsplash.com/license
+웹용 WebP로 크기와 형식을 변경했습니다.
 
-Unsplash license: https://unsplash.com/license
-Fonts: Anton, Noto Sans KR, Caveat via Google Fonts (open-source font licenses).
-Icons: Lucide (ISC license).
+회색 배경의 초상 · street-style.webp
+Rafaella Mendes Diniz, “Blonde woman in black top portrait”
+https://unsplash.com/photos/et_78QkMMQs
+Unsplash License · https://unsplash.com/license
+웹용 WebP로 크기와 형식을 변경했습니다.
+
+파도가 남긴 선 · ocean.webp
+Sean Oulashin, “Seashore during golden hour”
+https://unsplash.com/photos/KMn4VEeEPR8
+Unsplash License · https://unsplash.com/license
+웹용 WebP로 크기와 형식을 변경했습니다.
+
+글꼴 · Anton, Noto Sans KR (Google Fonts, SIL Open Font License)
+아이콘 · Lucide (ISC License)
