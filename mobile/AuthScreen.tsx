@@ -4,7 +4,7 @@ import { supabase } from "./lib/supabase";
 import { authError, authNotice } from "../shared/auth";
 import { useAuthForm } from "../shared/useAuthForm";
 
-export default function AuthScreen({ initialError = false }: { initialError?: boolean }) {
+export default function AuthScreen({ initialError = false, cameraRequested = false }: { initialError?: boolean; cameraRequested?: boolean }) {
   const [en, setEn] = useState(() => !Intl.DateTimeFormat().resolvedOptions().locale.startsWith("ko"));
   const t = (ko: string, english: string) => en ? english : ko;
   const h = useAuthForm(supabase, process.env.EXPO_PUBLIC_API_URL || "https://nepeel.com");
@@ -19,7 +19,9 @@ export default function AuthScreen({ initialError = false }: { initialError?: bo
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.content}>
       <View style={s.row}><Text style={s.brand}>nepeel</Text>{button(en ? "한국어" : "English", () => setEn(!en))}</View>
       <Text style={s.hero}>LESS FAKE.{"\n"}MORE LIFE.</Text>
-      <Text style={s.muted}>{t("당신이 직접 살아낸 순간으로 연결돼요.", "Connect through moments you lived yourself.")}</Text>
+      <Text style={s.muted}>{cameraRequested
+        ? t("로그인하면 카메라가 열려요.", "Sign in to open the camera.")
+        : t("당신이 직접 살아낸 순간으로 연결돼요.", "Connect through moments you lived yourself.")}</Text>
       {emailOnly ? <Text style={s.title}>{h.mode === "reset" ? t("비밀번호 다시 설정하기", "Reset your password") : t("인증메일 다시 받기", "Resend confirmation")}</Text>
         : <View style={s.row}>
           {button(t("로그인", "Sign in"), () => h.change("login"), h.mode === "login")}

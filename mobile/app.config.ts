@@ -38,6 +38,7 @@ export default {
           cameraPermission:
             "당신의 순간을 직접 촬영하기 위해 카메라 접근이 필요합니다.",
           recordAudioAndroid: false,
+          microphonePermission: false,
           barcodeScannerEnabled: false,
         },
       ],

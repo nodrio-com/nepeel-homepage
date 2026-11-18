@@ -31,6 +31,9 @@ import { useFeed } from "../shared/useFeed";
 import type { FeedMode, Post, Profile } from "../shared/types";
 import { useComments } from "../shared/useComments";
 import CameraScreen from "./CameraScreen";
+import CertificateHistory from "./CertificateHistory";
+import { watchCertificateQueue } from "./lib/certificates";
+import { subscribeCameraLinks } from "./lib/camera-entry";
 import ConnectionsScreen from "./ConnectionsScreen";
 import AccountModal from "./AccountModal";
 import AuthScreen from "./AuthScreen";
@@ -61,6 +64,8 @@ function Social() {
   const [focusId, setFocusId] = useState<string | null>(null);
   const [spatial, setSpatial] = useState(false);
   const [camera, setCamera] = useState(false);
+  const [cameraLink, setCameraLink] = useState(0);
+  const [certificateHistory, setCertificateHistory] = useState(false);
   const [reference, setReference] = useState<NearbyPhoto | null>(null);
   const [hi, setHi] = useState(false);
   const [commentsPost, setCommentsPost] = useState<Post | null>(null);
@@ -72,6 +77,19 @@ function Social() {
   const authUser = useRef<string | null>(null);
   const userId = session?.user.id;
   const profile = profileState?.id === userId ? profileState : null;
+  useEffect(() => {
+    if (userId) return watchCertificateQueue(userId);
+  }, [userId]);
+  useEffect(() => subscribeCameraLinks(Linking, () => {
+    setSpatial(false);
+    setHi(false);
+    setCertificateHistory(false);
+    setEditing(false);
+    setAccountModal(null);
+    setCommentsPost(null);
+    setCameraLink(count => count + 1);
+    setCamera(true);
+  }), []);
   const feedState = useFeed({
     client: supabase,
     userId,
@@ -116,7 +134,7 @@ function Social() {
       });
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, next) => {
+    } = supabase.auth.onAuthStateChange((event, next) => {
       authEvent = true;
       const changedAccount =
         !!authUser.current && authUser.current !== next?.user.id;
@@ -124,9 +142,11 @@ function Social() {
       setSession(next);
       setReady(true);
       if (next) setAuthInitError(false);
-      if (!next || changedAccount) {
+      // INITIAL_SESSION can arrive after the launch URL when signed out.
+      if (event === "SIGNED_OUT" || changedAccount) {
         setProfile(null);
         setCamera(false);
+        setCertificateHistory(false);
         setReference(null);
         setHi(false);
         setEditing(false);
@@ -141,23 +161,10 @@ function Social() {
       else supabase!.auth.stopAutoRefresh();
     });
     supabase.auth.startAutoRefresh();
-    const deepLink = ({ url }: { url: string }) => {
-      if (url.startsWith("nepeel://camera")) {
-        setReference(null);
-        setCamera(true);
-      }
-    };
-    const links = Linking.addEventListener("url", deepLink);
-    void Linking.getInitialURL()
-      .then((url) => {
-        if (active && url) deepLink({ url });
-      })
-      .catch(() => undefined);
     return () => {
       active = false;
       subscription.unsubscribe();
       lifecycle.remove();
-      links.remove();
       supabase!.auth.stopAutoRefresh();
     };
   }, []);
@@ -212,7 +219,7 @@ function Social() {
         <ActivityIndicator />
       </View>
     );
-  if (!session) return <AuthScreen initialError={authInitError} />;
+  if (!session) return <AuthScreen initialError={authInitError} cameraRequested={camera} />;
   if (spatial)
     return (
       <SpatialScreen
@@ -238,6 +245,7 @@ function Social() {
         key={session.user.id}
         userId={session.user.id}
         reference={reference}
+        cameraLink={cameraLink}
         close={() => {
           setCamera(false);
           setReference(null);
@@ -247,10 +255,6 @@ function Social() {
           setReference(null);
           changeMode("all");
           if (mode === "all" && !focusId) load();
-          Alert.alert(
-            "당신의 순간을 나눴어요.",
-            "웹에서도 같은 사진을 볼 수 있어요.",
-          );
         }}
       />
     );
@@ -282,10 +286,14 @@ function Social() {
         <Text style={s.brand}>
           nepeel<Text style={s.brandDot}>●</Text>
         </Text>
-        <Pressable style={s.button} onPress={() => setCamera(true)}>
+        <Pressable accessibilityRole="button" style={s.button} onPress={() => setCertificateHistory(true)}>
+          <Text>내 인증서</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" style={s.button} onPress={() => setCamera(true)}>
           <Text style={s.bold}>지금 촬영 ↗</Text>
         </Pressable>
       </View>
+      {certificateHistory && <CertificateHistory userId={session.user.id} close={() => setCertificateHistory(false)} />}
       <FlatList
         key={focusId ?? mode}
         data={feed}

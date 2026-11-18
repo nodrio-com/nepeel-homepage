@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "./lib/supabase";
+import { removeAccountCaptures } from "./lib/certificates";
 import { accountAction, reportPost, reportReasons } from "../shared/account";
 import type { Post } from "../shared/types";
 
@@ -52,6 +53,7 @@ export default function AccountModal({
           { action: "deleteAccount", password, confirmation },
           userId,
         );
+        removeAccountCaptures(userId);
         const { data } = await supabase!.auth.getSession();
         if (!alive.current || data.session?.user.id !== userId) return;
         setPassword("");
