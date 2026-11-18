@@ -294,7 +294,8 @@ p.loading-state { min-height: 0; padding: 16px 0; flex-direction: row; gap: 8px;
   .nav-item { padding-left: 12px; gap: 11px; font-size: 14px; }
 }
 @media (max-width: 760px) {
-  :root { --sidebar: 0px; --outer-gutter: 0px; }
+  :root { --sidebar: 0px; --outer-gutter: 0px; --mobile-nav-height: calc(68px + env(safe-area-inset-bottom)); }
+  #nl-badge-frame { translate: 0 calc(0px - var(--mobile-nav-height)); max-height: calc(100dvh - var(--mobile-nav-height)); }
   .sidebar { display: none; }
   .app-shell { margin: 0; border-left: 0; padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
   .utility-bar { padding: 6px 20px; min-height: 56px; flex-wrap: wrap; gap: 8px; max-width: 660px; margin: auto; }
@@ -317,7 +318,7 @@ p.loading-state { min-height: 0; padding: 16px 0; flex-direction: row; gap: 8px;
   .post-person > b { font-size: 14px; }
   .post-person small { font-size: 12px; }
   .preview-note { flex-wrap: wrap; }
-  .mobile-nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 20; display: flex; align-items: center; justify-content: space-around; height: calc(68px + env(safe-area-inset-bottom)); padding: 7px 10px calc(5px + env(safe-area-inset-bottom)); background: var(--paper); border-top: 1px solid var(--line); }
+  .mobile-nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 20; display: flex; align-items: center; justify-content: space-around; height: var(--mobile-nav-height); padding: 7px 10px calc(5px + env(safe-area-inset-bottom)); background: var(--paper); border-top: 1px solid var(--line); }
   .mobile-nav > button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-width: 48px; height: 49px; color: var(--muted); padding: 0; }
   .mobile-nav > button svg { width: 21px; height: 21px; stroke-width: 1.6; }
   .mobile-nav > button span { font-size: 11px; }
