@@ -59,9 +59,9 @@ export default function PostActions({ post, userId, currentUser, manage, react, 
     const client = supabase;
     if (!client || !owner) return;
     void run("share", async () => {
-      ++revision.current;
       const token = await setOwnPostShare(client, post.id, enabled);
       if (!current()) return;
+      ++revision.current;
       setLinkState(enabled ? "active" : "inactive");
       if (token) {
         const url = postShareUrl(token);
