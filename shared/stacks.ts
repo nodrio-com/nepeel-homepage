@@ -66,6 +66,12 @@ export function setStackShare(client: SupabaseClient, id: string, enabled: boole
   return stackRpc(client, "set_work_stack_share", { p_stack: id, p_enabled: enabled, p_revision: revision });
 }
 
+export function publishStackSelection(client: SupabaseClient, stackId: string, selected: StackRef[], revision: number): Promise<WorkStack> {
+  return stackRpc(client, "publish_work_stack_selection", {
+    p_stack: stackId, p_selected: selected.map(({ id, source }) => ({ id, source })), p_revision: revision,
+  });
+}
+
 export function stackPublicPath(token: string) {
   return "/stack/" + encodeURIComponent(token);
 }
