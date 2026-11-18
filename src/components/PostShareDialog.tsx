@@ -9,21 +9,25 @@ export { ShareLinkDialog as PostShareDialog } from "./ShareLinkDialog";
 export function OwnerShareActions({ postId, manual, manage = true }: {
   postId: string; manual: (url: string, opener: HTMLButtonElement) => void; manage?: boolean;
 }) {
-  const [active, setActive] = useState(false);
+  const [linkState, setLinkState] = useState<"inactive" | "active" | "unknown">("inactive");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const current = useRef(0);
+  const linkRevision = useRef(0);
   const busy = useRef(false);
   useLayoutEffect(() => {
-    const request = ++current.current;
+    const revision = ++linkRevision.current;
+    const readState = (state: "inactive" | "active" | "unknown") => {
+      if (linkRevision.current === revision) setLinkState(state);
+    };
     busy.current = false;
     setPending(false);
-    setActive(false);
+    setLinkState("inactive");
     setMessage("");
-    if (manage && supabase) void supabase.rpc("has_own_post_share_link", { p_post: postId }).then(({ data }) => {
-      if (current.current === request) setActive(data === true);
-    });
-    return () => { ++current.current; };
+    if (manage && supabase) void Promise.resolve(supabase.rpc("has_own_post_share_link", { p_post: postId }))
+      .then(({ data, error }) => readState(error ? "unknown" : data === true ? "active" : "inactive"))
+      .catch(() => readState("unknown"));
+    return () => { ++current.current; ++linkRevision.current; };
   }, [postId, manage]);
   useEffect(() => {
     if (message !== "링크 복사됨") return;
@@ -41,7 +45,8 @@ export function OwnerShareActions({ postId, manual, manage = true }: {
     try {
       const token = await setOwnPostShare(supabase, postId, enabled);
       if (request !== current.current) return;
-      setActive(enabled);
+      ++linkRevision.current;
+      setLinkState(enabled ? "active" : "inactive");
       if (location.hash !== route || !opener.isConnected) return;
       if (token === null) { setMessage("공유 해제됨"); return; }
       const url = postShareUrl(token, location.origin);
@@ -61,8 +66,8 @@ export function OwnerShareActions({ postId, manual, manage = true }: {
       aria-disabled={pending} onClick={event => void change(true, event.currentTarget)}>
       {pending ? <LoaderCircle className="spin" /> : message === "링크 복사됨" ? <Check /> : <Send />}
     </button>
-    {manage && active && <button type="button" className="text-button owner-unshare" disabled={pending}
-      onClick={event => void change(false, event.currentTarget)}><Link2Off size={15} aria-hidden="true" />링크 끊기</button>}
+    {linkState !== "inactive" && <button type="button" className="text-button owner-unshare" disabled={pending}
+      onClick={event => void change(false, event.currentTarget)}><Link2Off size={15} aria-hidden="true" />공유 링크 끊기</button>}
     <span className={message ? "owner-share-status" : "visually-hidden"} role="status">{message}</span>
   </>;
 }
