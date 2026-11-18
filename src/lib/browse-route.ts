@@ -4,6 +4,7 @@ export type MediaFilter = "all" | "photo" | "video" | "following";
 
 export type BrowseRoute = {
   view: View;
+  layout?: "grid";
   filter: MediaFilter;
   search: string;
   open: string;
@@ -18,12 +19,14 @@ export function readBrowseRoute(hash: string): BrowseRoute {
   const view = views.find(v => v === path) ?? "feed";
   const f = params.get("show");
   const filter = f === "photo" || f === "video" || (f === "following" && view === "feed") ? f : "all";
-  return { view, filter, search: view === "discover" ? (params.get("q") ?? "").slice(0, 80) : "",
+  return { view, filter, ...(path === "feed" && params.get("layout") === "grid" ? { layout: "grid" as const } : {}),
+    search: view === "discover" ? (params.get("q") ?? "").slice(0, 80) : "",
     open: params.get("open")?.slice(0, 100) ?? "", postId: path.startsWith("post/") ? path.slice(5, 105) : "" };
 }
 
 export function browseHash(route: BrowseRoute) {
   const params = new URLSearchParams();
+  if (route.view === "feed" && !route.postId && route.layout === "grid") params.set("layout", "grid");
   if (route.search && route.view === "discover") params.set("q", route.search);
   if (route.filter !== "all") params.set("show", route.filter);
   if (route.open) params.set("open", route.open);
