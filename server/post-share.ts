@@ -53,7 +53,7 @@ export async function servePostShare(request: Request, source: PostShareSource) 
       const isVideo = type.startsWith("video/");
       const title = isVideo ? "공유된 영상" : "공유된 사진";
       const media = isVideo
-        ? `<video src="${src}" aria-label="${title}" controls playsinline preload="metadata"></video>`
+        ? `<video src="${src}" aria-label="${title}" controls playsinline muted autoplay preload="metadata"></video>`
         : `<img class="photo" src="${src}" alt="${title}" fetchpriority="high">`;
       const caption = post.caption ? `<figcaption>${escapeText(post.caption)}</figcaption>` : "";
       return page(request, 200, title,
