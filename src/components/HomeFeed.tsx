@@ -1,17 +1,19 @@
 import { Aperture, Maximize2 } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type MouseEvent, type ReactNode } from "react";
 import type { Post } from "../../shared/types";
 import { sampleMeta } from "../lib/samples";
 import { mediaTitle } from "./MediaGrid";
+import { browseHash } from "../lib/browse-route";
 
 type Props = {
   posts: Post[];
   onOpen: (post: Post) => void;
+  onTopic: (event: MouseEvent<HTMLAnchorElement>, topic: string) => void;
   actions: (post: Post) => ReactNode;
   viewerOpen: boolean;
 };
 
-export function HomeFeed({ posts, onOpen, actions, viewerOpen }: Props) {
+export function HomeFeed({ posts, onOpen, onTopic, actions, viewerOpen }: Props) {
   const playing = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
     if (viewerOpen) playing.current?.pause();
@@ -29,7 +31,8 @@ export function HomeFeed({ posts, onOpen, actions, viewerOpen }: Props) {
               {meta ? <Aperture size={20}/> : post.display_name.slice(0, 1)}
             </span>
             <div className="post-person"><b>{post.display_name}</b>
-              <small>{meta ? [meta.category, meta.creator].filter(Boolean).join(" · ") : "@" + post.username}</small>
+              <small>{meta ? <><a className="post-topic" id={"post-topic-" + post.id} href={browseHash({ view: "discover", filter: "all", search: meta.category, open: "", postId: "" })}
+                onClick={event => onTopic(event, meta.category)}>{meta.category}</a>{meta.creator && <span>· {meta.creator}</span>}</> : "@" + post.username}</small>
             </div>
             {video && <button type="button" className="icon-button" aria-label={title + " 동영상 크게 보기"}
               onClick={() => onOpen(post)}><Maximize2 size={18}/></button>}
