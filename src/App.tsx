@@ -1,12 +1,14 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, MouseEvent, ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
   Aperture, ArrowDown, ArrowLeft, Bookmark, Camera, Check, Compass, Flag, Grid2X2, Grid3X3,
-  Heart, Home, Layers, LoaderCircle, MessageCircle, Search, Send, Settings, Trash2, UserRound, X,
+  Heart, Home, Layers, LoaderCircle, MessageCircle, Search, Send, Settings, Trash2, UserRound, UsersRound, X,
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
-import { sampleMeta, samplePosts } from "./lib/samples";
+import { editorialTopics, matchesEditorialSearch, sampleMeta, samplePosts } from "./lib/samples";
+import { CommentDrafts } from "../shared/commentDrafts";
+import { HiMessageDrafts } from "./lib/hi-message-drafts";
 import { getProfile, setFollowing, setReaction } from "../shared/data";
 import { useFeed } from "./useFeed";
 import type { FeedMode, Post, Profile } from "../shared/types";
@@ -130,8 +132,11 @@ export function Dialog({
 
 export default function App() {
   const [hash, setHash] = useState(() => location.hash);
+  const topicReturn = useRef<{ id: string; scroll: number; hash: string } | null>(null);
   const route = readBrowseRoute(hash);
   const { view, filter, search, postId: postLink } = route;
+  const following = route.audience === "following";
+  const scopedSearch = view === "discover" || view === "saved";
   const [dense, setDense] = useState(() => {
     try { return localStorage.getItem("nepeel.grid.dense") === "1"; } catch { return false; }
   });
@@ -139,10 +144,11 @@ export default function App() {
     setDense(value);
     try { localStorage.setItem("nepeel.grid.dense", value ? "1" : "0"); } catch { /* Storage can be unavailable in private browsing. */ }
   }
-  function navigate(next: BrowseRoute, options: { replace?: boolean; viewer?: boolean } = {}) {
+  function navigate(next: BrowseRoute, options: { replace?: boolean; viewer?: boolean; comments?: boolean } = {}) {
     const to = browseHash(next);
     if (to === location.hash) return;
-    const state = options.viewer ? { nepeelViewer: true } : null;
+    topicReturn.current = null;
+    const state = options.viewer ? { nepeelViewer: true, focusComments: !!options.comments } : null;
     if (options.replace) history.replaceState(state, "", to);
     else history.pushState(state, "", to);
     setHash(to);
@@ -166,6 +172,8 @@ export default function App() {
   const authUser = useRef<string | null>(null);
   const preview = !session;
   const userId = session?.user.id;
+  const commentDrafts = useMemo(() => new CommentDrafts(userId), [userId]);
+  const hiMessageDrafts = useMemo(() => new HiMessageDrafts(), [userId]);
   const editorialSaves = useEditorialSaves(userId);
   const [manualLink, setManualLink] = useState("");
   const [copied, setCopied] = useState("");
@@ -180,16 +188,21 @@ export default function App() {
   }, [notice]);
   useEffect(() => {
     const sync = () => setHash(location.hash);
-    window.addEventListener("popstate", sync);
+    const onPop = (event: PopStateEvent) => {
+      topicReturn.current = event.state?.nepeelTopicReturn ?? null;
+      sync();
+    };
+    window.addEventListener("popstate", onPop);
     window.addEventListener("hashchange", sync);
     return () => {
-      window.removeEventListener("popstate", sync);
+      window.removeEventListener("popstate", onPop);
       window.removeEventListener("hashchange", sync);
     };
   }, []);
   useEffect(() => {
-    setSearchDraft(previous => view === "discover" && previous.trim() === search ? previous : search);
-  }, [view, search]);
+    setSearchDraft(previous => scopedSearch && previous.trim() === search ? previous : search);
+    composingSearch.current = false;
+  }, [view, search, scopedSearch]);
   useEffect(() => { document.title = labels[view] + " · nepeel"; }, [view]);
   useEffect(() => {
     if (!supabase) return;
@@ -253,12 +266,22 @@ export default function App() {
         ? "profile"
         : view === "discover"
           ? "all"
-          : filter === "following" ? "following" : "all";
+          : following ? "following" : "all";
   const feed = useFeed({
     client: supabase, userId, enabled: authReady && view !== "hi" && view !== "about" && view !== "stacks",
-    scope: view, mode: feedMode, search: view === "discover" ? search : "", postId: postLink, refresh,
+    scope: view, mode: feedMode, mediaFilter: filter, search, postId: postLink, refresh,
   });
   const { setPosts, loading, hasMore, nextPage, loadingMore: loadMore } = feed;
+  useLayoutEffect(() => {
+    const target = topicReturn.current;
+    if (!target || target.hash !== hash || loading || !authReady) return;
+    topicReturn.current = null;
+    const opener = document.getElementById(target.id);
+    if (opener instanceof HTMLAnchorElement) {
+      opener.focus({ preventScroll: true });
+      window.scrollTo({ top: target.scroll, behavior: "instant" });
+    }
+  }, [hash, loading, authReady]);
   const reloadFeed = feed.reload;
   useEffect(() => {
     const resume = () => { if (document.visibilityState === "visible") void reloadFeed(4 * 60_000); };
@@ -267,21 +290,19 @@ export default function App() {
   }, [reloadFeed]);
   const error = feed.error ? "피드를 불러오지 못했어요. 연결을 확인하고 다시 시도해 주세요." : "";
   const canBrowse = view === "feed" || view === "discover";
-  const editorial = canBrowse && !postLink && filter !== "following" && authReady
-    ? samplePosts.filter(p => {
-        const item = sampleMeta.find(s => s.id === p.id);
-        return !search || [p.caption, p.display_name, item?.tag, item?.category, item?.creator].join(" ").toLocaleLowerCase().includes(search.toLocaleLowerCase());
-      }) : [];
+  const editorial = canBrowse && !postLink && !following && authReady
+    ? samplePosts.filter(p => matchesEditorialSearch(p, search)) : [];
   const memberPosts = userId ? feed.posts : [];
   const typeMatches = (p: Post) => (filter !== "photo" && filter !== "video") || (p.media_type ?? "photo") === filter;
-  const savedEditorial = view === "saved" ? editorialSaves.ids.flatMap(id => samplePosts.filter(p => p.id === id)) : [];
+  const savedEditorial = view === "saved" ? editorialSaves.ids.flatMap(id =>
+    samplePosts.filter(p => p.id === id && matchesEditorialSearch(p, search))) : [];
   const posts = [...memberPosts, ...savedEditorial, ...editorial].filter(typeMatches);
   const detailIndex = route.open ? posts.findIndex(p => p.id === route.open) : -1;
   const lookup = !!route.open && detailIndex < 0 && hasMore && !loading && !!userId &&
     /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(route.open);
   const directPost = useFeed({
     client: supabase, userId, enabled: lookup, scope: view, mode: feedMode,
-    search, postId: route.open,
+    search, mediaFilter: filter, postId: route.open,
   });
   const detail = posts[detailIndex] ?? (lookup ? directPost.posts.find(p => p.id === route.open && typeMatches(p)) : null);
   const detailMeta = detail?.sample ? sampleMeta.find(s => s.id === detail.id) : undefined;
@@ -301,8 +322,17 @@ export default function App() {
     if (event.currentTarget.classList.contains("mobile-search-link"))
       requestAnimationFrame(() => document.querySelector<HTMLInputElement>(".discover-field input")?.focus({ preventScroll: true }));
   }
-  function openPost(post: Post) {
-    navigate({ ...route, open: post.id }, { replace: !!route.open, viewer: !route.open || history.state?.nepeelViewer === true });
+  function openPost(post: Post, comments = false) {
+    navigate({ ...route, open: post.id }, { replace: !!route.open, viewer: !route.open || history.state?.nepeelViewer === true, comments });
+  }
+  function openTopic(event: MouseEvent<HTMLAnchorElement>, topic: string) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    history.replaceState({ ...history.state, nepeelTopicReturn: {
+      id: event.currentTarget.id, scroll: window.scrollY, hash: location.hash,
+    } }, "");
+    navigate({ view: "discover", filter: "all", search: topic, open: "", postId: "" });
+    window.scrollTo({ top: 0, behavior: "instant" });
   }
   function closePost() {
     if (history.state?.nepeelViewer) history.back();
@@ -360,8 +390,15 @@ export default function App() {
   }
   async function follow(post: Post) {
     if (!requireMember(post) || !supabase || !userId) return;
+    const at = location.hash;
     await run(`follow-${post.user_id}`, async () => {
       await setFollowing(supabase!, userId, post.user_id, !post.following);
+      if (following && post.following) {
+        if (lookup) directPost.setPosts([]);
+        setPosts(old => old.filter(item => item.user_id !== post.user_id));
+        if (route.open && location.hash === at) closePost();
+        return;
+      }
       if (lookup) directPost.setPosts(old => old.map(p => ({ ...p, following: !post.following })));
       setPosts((old) =>
         old.map((p) =>
@@ -373,7 +410,7 @@ export default function App() {
   function changeSearch(value: string) {
     setSearchDraft(value);
     window.clearTimeout(searchTimer.current);
-    if (view !== "discover" || composingSearch.current) return;
+    if (!scopedSearch || composingSearch.current) return;
     const at = location.hash;
     searchTimer.current = window.setTimeout(() => {
       if (location.hash === at)
@@ -384,7 +421,7 @@ export default function App() {
     e.preventDefault();
     if (composingSearch.current) return;
     window.clearTimeout(searchTimer.current);
-    navigate({ view: "discover", filter: view === "discover" ? filter : "all", search: searchDraft.trim(), open: "", postId: "" });
+    navigate({ view: view === "saved" ? "saved" : "discover", filter: scopedSearch ? filter : "all", search: searchDraft.trim(), open: "", postId: "" });
     window.scrollTo({ top: 0, behavior: "instant" });
   }
   async function shareEditorial(post: Post) {
@@ -417,9 +454,10 @@ export default function App() {
       <button
         className="icon-button"
         aria-label="댓글 보기"
-        onClick={() => inFeed ? openPost(post) : document.getElementById("viewer-comment-input")?.focus()}
+        aria-description={inFeed && Number(post.comment_count) > 0 ? `댓글 ${post.comment_count}개` : undefined}
+        onClick={() => inFeed ? openPost(post, true) : document.getElementById("viewer-comment-input")?.focus()}
       >
-        <MessageCircle />
+        <MessageCircle />{inFeed && Number(post.comment_count) > 0 && <span>{Number(post.comment_count).toLocaleString()}</span>}
       </button>
       {post.user_id === userId && <OwnerShareActions key={userId + ":" + post.id} postId={post.id} manual={setManualLink} manage={!inFeed} />}
       {post.user_id !== userId && <button className="text-button" disabled={busy.includes("follow-" + post.user_id)}
@@ -431,7 +469,7 @@ export default function App() {
       <span className="action-spacer" />
       <button
         className={`icon-button ${post.saved ? "saved" : ""}`}
-        aria-label={post.saved ? "저장 취소" : "사진 저장"}
+        aria-label={post.saved ? "저장 취소" : "게시물 저장"}
         aria-pressed={post.saved}
         disabled={busy.includes(`bookmarks-${post.id}`)}
         onClick={() => void react(post, "bookmarks")}
@@ -457,7 +495,7 @@ export default function App() {
             ))}
           </nav>
           <div className="browse-tools">
-            {view !== "discover" && <form className="browse-search" role="search" onSubmit={searchSubmit}>
+            {!scopedSearch && <form className="browse-search" role="search" onSubmit={searchSubmit}>
               <button aria-label="검색" type="submit"><Search size={19} /></button>
               <input type="search" aria-label="사진, 영상, 사람 검색" placeholder="사진, 영상, 사람 검색" maxLength={80}
                 value={searchDraft} onChange={e => changeSearch(e.target.value)} />
@@ -477,7 +515,7 @@ export default function App() {
         {view !== "profile" && view !== "about" && view !== "hi" && <h1 className="visually-hidden">{labels[view]}</h1>}
         {view === "about" && <About onCamera={openCamera} />}
         {view === "hi" && <Suspense fallback={<p className="loading-state" role="status">연결 불러오는 중…</p>}>
-          <Connections key={userId ?? "guest"} userId={userId} login={() => setModal("auth")} />
+          <Connections key={userId ?? "guest"} userId={userId} messageDrafts={hiMessageDrafts} login={() => setModal("auth")} />
         </Suspense>}
         {(view === "profile" || view === "saved") && <>
           {view === "profile" && <section className="browse-profile">
@@ -505,42 +543,55 @@ export default function App() {
         </Suspense> : <p role="status" className="loading-state">묶음 불러오는 중…</p>)}
         {showFeed && <>
           {postLink && <button className="back-link" onClick={() => go("feed")}><ArrowLeft size={16}/> 피드로</button>}
-          {view === "feed" && !postLink && <nav className="home-modes library-tabs" aria-label="홈 보기 방식">
+          {view === "feed" && !postLink && <div className="home-view-bar"><nav className="home-modes library-tabs" aria-label="홈 보기 방식">
             <a href={browseHash({ ...route, layout: undefined, open: "" })} aria-current={!route.layout ? "page" : undefined}>피드</a>
             <a href={browseHash({ ...route, layout: "grid", open: "" })} aria-current={route.layout === "grid" ? "page" : undefined}>그리드</a>
-          </nav>}
-          {view === "discover" && <form className="discover-field" role="search" onSubmit={searchSubmit}>
-            <Search size={20} aria-hidden="true"/><input type="search" aria-label="탐색 검색어" placeholder="사진, 영상, 사람 검색"
+          </nav><button type="button" className="audience-toggle" aria-pressed={following}
+            onClick={() => navigate({ ...route, audience: following ? undefined : "following", open: "" })}>
+              {following ? <Check size={16}/> : <UsersRound size={16}/>} 팔로잉</button></div>}
+          {scopedSearch && <form className="discover-field" role="search" onSubmit={searchSubmit}>
+            <Search size={20} aria-hidden="true"/><input type="search" aria-label={view === "saved" ? "저장한 게시물 검색" : "탐색 검색어"}
+              placeholder={view === "saved" ? "저장한 게시물 검색" : "사진, 영상, 사람 검색"}
               value={searchDraft} onChange={e=>changeSearch(e.target.value)} maxLength={80}
               onCompositionStart={() => { composingSearch.current = true; window.clearTimeout(searchTimer.current); }}
               onCompositionEnd={e => { composingSearch.current = false; changeSearch(e.currentTarget.value); }}/>
+            {searchDraft && <button type="button" aria-label="검색 지우기" onClick={e => {
+              const field = e.currentTarget.form?.querySelector("input");
+              window.clearTimeout(searchTimer.current); setSearchDraft("");
+              navigate({ ...route, search: "", open: "" }, { replace: true }); field?.focus();
+            }}><X size={17}/></button>}
             <button type="submit">검색</button>
           </form>}
+          {view === "discover" && !search && <nav className="discovery-topics" aria-label="주제별 탐색">
+            {editorialTopics.map(topic => <a key={topic} id={"discover-topic-" + topic} href={browseHash({ view, filter: "all", search: topic, open: "", postId: "" })}
+              onClick={e => openTopic(e, topic)}>{topic}</a>)}
+          </nav>}
           {!postLink && <div className="browse-filters">
             <div className="filter-strip" aria-label="콘텐츠 필터">
-              {([["all", "전체"], ["photo","사진"], ["video","동영상"], ...(view === "feed" ? [["following","팔로잉"]] : [])] as const).map(([key,label]) =>
-                <button type="button" key={key} aria-pressed={filter === key} onClick={() => setFilter(key as MediaFilter)}>{label}</button>)}
+              {([["all", "전체"], ["photo","사진"], ["video","동영상"]] as const).map(([key,label]) =>
+                <button type="button" key={key} aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</button>)}
             </div>
             {(view !== "feed" || route.layout === "grid") && <div className="density-group" aria-label="그리드 간격">
               <button type="button" aria-label="기본 그리드" aria-pressed={!dense} onClick={() => changeDensity(false)}><Grid2X2 size={18}/></button>
               <button type="button" aria-label="촘촘한 그리드" aria-pressed={dense} onClick={() => changeDensity(true)}><Grid3X3 size={18}/></button>
             </div>}
           </div>}
-          {search && <div className="search-summary"><span>‘{search}’ 검색 결과</span><button aria-label="검색 지우기" onClick={() => go("discover")}><X size={16}/></button></div>}
           {feed.refreshError && <p className="form-error" role="alert">업데이트할 수 없습니다. <button onClick={() => void reloadFeed()}>다시 시도</button></p>}
           {loading || !authReady ? <p className="loading-state" role="status"><LoaderCircle className="spin"/> 불러오는 중…</p>
           : error ? <div className="browse-empty" role="alert"><p>{error}</p><button className="outline-button" onClick={() => void reloadFeed()}>다시 시도</button></div>
           : posts.length && !(postLink && preview) ? (view === "feed" && !route.layout
-            ? <HomeFeed posts={posts} onOpen={openPost} actions={post => actions(post, true)} viewerOpen={!!detail}/>
+            ? <HomeFeed posts={posts} onOpen={openPost} onTopic={openTopic} actions={post => actions(post, true)} viewerOpen={!!detail}/>
             : <MediaGrid posts={posts} dense={dense} onOpen={openPost}/>)
           : <div className="browse-empty">
             <p>{search ? "검색 결과가 없어요." : postLink ? (preview ? "이 게시물은 회원에게만 공개돼요." : "게시물을 볼 수 없어요.") :
-              preview && (view === "profile" || filter === "following") ? "로그인하면 " + (filter === "following" ? "팔로잉 피드" : "내 게시물") + "을 볼 수 있어요." :
-              filter === "following" ? "팔로우한 사람의 게시물이 아직 없어요." : filter === "video" ? "표시할 동영상이 없어요." :
+              preview && (view === "profile" || following) ? "로그인하면 " + (following ? "팔로잉 피드" : "내 게시물") + "을 볼 수 있어요." :
+              filter === "video" ? "표시할 동영상이 없어요." : filter === "photo" ? "표시할 사진이 없어요." : following ? "팔로우한 사람의 게시물이 아직 없어요." :
               view === "saved" ? "저장한 게시물이 없어요." : "표시할 게시물이 없어요."}</p>
-            {preview && !search && (postLink || view === "profile" || filter === "following") ?
+            {preview && !search && (postLink || view === "profile" || following) ?
             <button className="dark-button" onClick={() => setModal("auth")}>로그인</button> :
-            <button className="outline-button" onClick={() => go(search ? "discover" : "feed")}>{search ? "검색 지우기" : "전체 둘러보기"}</button>}
+            search || filter !== "all" ? <button className="outline-button" onClick={() => navigate({ ...route, filter: "all", search: "", open: "" })}>
+              {view === "saved" ? "저장한 게시물 전체 보기" : following ? "팔로잉 전체 보기" : "전체 보기"}</button> :
+            <button className="outline-button" onClick={() => go("feed")}>전체 둘러보기</button>}
           </div>}
           {route.open && !detail && !loading && authReady && !(lookup && directPost.loading) && <div className="browse-empty" role="status">
             <p>이 게시물을 열 수 없어요.</p><button className="outline-button" onClick={closePost}>목록으로</button>
@@ -588,6 +639,7 @@ export default function App() {
       )}
       {modal === "recovery" && <Recovery close={() => setModal(null)} />}
       {detail && <PostDialog post={detail} actions={actions(detail)} userId={userId} close={closePost}
+        focusComments={history.state?.focusComments === true} commentDrafts={commentDrafts}
         editorialTitle={detailMeta?.title} position={detailIndex >= 0 ? detailIndex + 1 : undefined} total={detailIndex >= 0 ? posts.length : undefined}
         onPrevious={detailIndex > 0 ? () => openPost(posts[detailIndex - 1]) : undefined}
         onNext={detailIndex >= 0 && detailIndex + 1 < posts.length ? () => openPost(posts[detailIndex + 1]) : undefined}
