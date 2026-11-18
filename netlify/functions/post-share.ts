@@ -11,6 +11,18 @@ function storageClient() {
   });
 }
 
+export async function fetchPostMedia(path: string, incoming: Request) {
+  const { data, error } = await storageClient().storage.from("captures").createSignedUrl(path, 30);
+  if (error || !data?.signedUrl) throw error || new Error("Storage unavailable");
+  const range = incoming.headers.get("range");
+  return fetch(data.signedUrl, {
+    method: incoming.method,
+    headers: range ? { Range: range } : {},
+    signal: incoming.signal,
+    redirect: "error",
+  });
+}
+
 export default function postShare(request: Request) {
   return servePostShare(request, {
     async resolve(token) {
@@ -18,16 +30,6 @@ export default function postShare(request: Request) {
       if (error) throw error;
       return data as { image_path: string; caption: string; mime_type: string | null } | null;
     },
-    async media(path, incoming) {
-      const { data, error } = await storageClient().storage.from("captures").createSignedUrl(path, 30);
-      if (error || !data?.signedUrl) throw error || new Error("Storage unavailable");
-      const range = incoming.headers.get("range");
-      return fetch(data.signedUrl, {
-        method: incoming.method,
-        headers: range ? { Range: range } : {},
-        signal: incoming.signal,
-        redirect: "error",
-      });
-    },
+    media: fetchPostMedia,
   });
 }
