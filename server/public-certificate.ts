@@ -35,7 +35,7 @@ export interface CertificateReader {
   verifyMint: typeof verifyMint;
 }
 
-function storageReader(): CertificateReader {
+function storageReader(column: "share_hash" | "id"): CertificateReader {
   const deadline = AbortSignal.timeout(22_000);
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -50,9 +50,9 @@ function storageReader(): CertificateReader {
     },
   });
   return {
-    async find(shareHash) {
+    async find(key) {
       const { data, error } = await client.from("media_certificates").select(fields)
-        .eq("share_hash", shareHash).maybeSingle();
+        .eq(column, key).maybeSingle();
       if (error) throw error;
       return data;
     },
@@ -61,11 +61,12 @@ function storageReader(): CertificateReader {
       if (error) throw error;
       return data;
     },
-    async stillShared(shareHash, row) {
+    async stillShared(key, row) {
       let query = client.from("media_certificates").select("id")
-        .eq("id", row.id).eq("share_hash", shareHash).eq("commitment", row.commitment)
+        .eq(column, key).eq("commitment", row.commitment)
         .eq("platform", row.platform).eq("media_kind", row.media_kind).eq("source_hash", row.source_hash)
         .eq("display_hash", row.display_hash).eq("salt", row.salt);
+      if (column !== "id") query = query.eq("id", row.id);
       // A queued certificate may finish minting during download. Already-minted
       // records must still carry the exact receipt we checked before delivery.
       query = row.state === "queued" ? query.in("state", ["queued", "minted"]) :
@@ -87,17 +88,26 @@ export async function publicCertificate(request: Pick<Request, "method" | "url">
     return new Response(null, { status: 405, headers: { ...privateHeaders, Allow: "GET, HEAD" } });
   const tokens = new URL(request.url).searchParams.getAll("token");
   if (tokens.length !== 1 || !validShareToken(tokens[0])) return unavailable(404);
+  const token = tokens[0];
+  const key = createHash("sha256").update(token).digest("hex");
+  return verifyCertificate(request.method, "share_hash", key, exampleToken(token) ? token : null, reader);
+}
 
+// Only the stack handler calls this after resolving a specific membership. It
+// re-resolves that same membership before returning these verified bytes.
+export function stackCertificate(method: string, sourceId: string) {
+  return verifyCertificate(method, "id", sourceId, null);
+}
+
+async function verifyCertificate(method: string, column: "share_hash" | "id", key: string, example: "example-photo" | "example-video" | null, reader?: CertificateReader) {
   try {
-    const token = tokens[0];
-    const shareHash = createHash("sha256").update(token).digest("hex");
-    const store = reader ?? (exampleToken(token) ? exampleReader(token) : storageReader());
-    const row = await store.find(shareHash);
+    const store = reader ?? (example ? exampleReader(example) : storageReader(column));
+    const row = await store.find(key);
     if (!row || row.state === "uploading") return unavailable(404);
     if (row.state !== "minted" && row.state !== "queued") return unavailable(409);
     const video = row.media_kind === "video";
     if ((!video && row.media_kind !== "photo") ||
-        (exampleToken(token) ? row.platform !== "example" || token !== `example-${row.media_kind}` || row.state !== "minted"
+        (example ? row.platform !== "example" || example !== `example-${row.media_kind}` || row.state !== "minted"
           : row.platform !== "android" && row.platform !== "ios") ||
         row.object_path !== `${row.id}/media.${video ? "mp4" : "jpg"}` ||
         certificateCommitment(row.id, row.media_kind, row.source_hash, row.display_hash, row.salt) !== row.commitment)
@@ -113,14 +123,14 @@ export async function publicCertificate(request: Pick<Request, "method" | "url">
     }
     let bytes: ArrayBuffer | null = null;
     // HEAD authenticates the digest for a viewer that already holds the verified bytes.
-    if (request.method === "GET") {
+    if (method === "GET") {
       const file = await store.download(row.object_path);
       if (!file.size || file.size > CAPTURE_CERT_MAX_BYTES) return unavailable(409);
       bytes = await file.arrayBuffer();
       if (createHash("sha256").update(Buffer.from(bytes)).digest("hex") !== row.display_hash) return unavailable(409);
     }
     // A revocation or link rotation can race the ledger/storage reads.
-    if (!await store.stillShared(shareHash, row)) return unavailable(404);
+    if (!await store.stillShared(key, row)) return unavailable(404);
 
     headers.set("Content-Type", video ? "video/mp4" : "image/jpeg");
     headers.set("X-Certificate-State", row.state);
