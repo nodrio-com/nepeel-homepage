@@ -1,11 +1,13 @@
 import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { AppState } from "react-native";
 import {
   roundCoordinate,
   type PhotoPlace,
   type PlaceAudience,
 } from "../../shared/capture-context";
 
+// Preserve the stored discovery preference; it never authorizes attaching a photo place.
 const preferenceKey = (userId: string) => `nepeel.places.enabled.${userId}`;
 export async function placesEnabled(userId: string) {
   return (await AsyncStorage.getItem(preferenceKey(userId))) === "true";
@@ -37,20 +39,31 @@ async function timeout<T>(work: Promise<T>, ms: number): Promise<T> {
 export async function currentPlace(
   audience: PlaceAudience = "followers",
   askPermission = false,
+  isCurrent: () => boolean = () => true,
 ): Promise<PhotoPlace> {
+  const requireForeground = () => {
+    if (AppState.currentState !== "active" || !isCurrent())
+      throw new Error("앱을 연 상태에서 위치를 다시 확인해 주세요.");
+  };
+  requireForeground();
   let permission = await Location.getForegroundPermissionsAsync();
-  if (!permission.granted && askPermission)
+  requireForeground();
+  if (!permission.granted && askPermission) {
     permission = await Location.requestForegroundPermissionsAsync();
+    requireForeground();
+  }
   if (!permission.granted)
     throw new Error(
-      "촬영 장소를 사용하려면 위치 권한을 허용해 주세요. 위치 없이도 사진을 올릴 수 있어요.",
+      "위치를 사용하려면 위치 권한을 허용해 주세요. 위치 없이도 사진을 올릴 수 있어요.",
     );
   if (!(await Location.hasServicesEnabledAsync()))
     throw new Error("휴대폰의 위치 서비스를 켜 주세요.");
+  requireForeground();
   let position = await Location.getLastKnownPositionAsync({
     maxAge: 60_000,
     requiredAccuracy: 200,
   });
+  requireForeground();
   if (!position)
     position = await timeout(
       Location.getCurrentPositionAsync({
@@ -58,6 +71,7 @@ export async function currentPlace(
       }),
       20_000,
     );
+  requireForeground();
   if (
     position.mocked ||
     (position.coords.accuracy ?? Infinity) > 300 ||
@@ -89,5 +103,6 @@ export async function currentPlace(
   } catch {
     /* Coordinates are usable even when the native geocoder is unavailable. */
   }
+  requireForeground();
   return { latitude, longitude, label: label.slice(0, 80), audience };
 }

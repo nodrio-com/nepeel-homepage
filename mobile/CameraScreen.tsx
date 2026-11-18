@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
@@ -20,18 +20,27 @@ import {
   discardPhoto,
   prepareCamera,
   prepareCaptureRequest,
+  withAttestation,
+  type CertificateReceipt,
+  type MediaKind,
 } from "./lib/capture";
+import { CAPTURE_CERT_MAX_BYTES, CAPTURE_CERT_VIDEO_SECONDS } from "../shared/media-certificate";
+import { observeCertificates, saveCapture, shareCertificate } from "./lib/certificates";
+import CertificateHistory, { certificateLabel } from "./CertificateHistory";
 import type { Challenge } from "../shared/types";
 import { CaptureSubmission } from "../shared/capture-submission";
 import {
-  emptyCaptureContext,
   PHOTO_FILTERS,
   type CaptureContext,
   type PhotoFilter,
   type PlaceAudience,
 } from "../shared/capture-context";
+import {
+  CaptureLocationConsent,
+  newPhotoCaptureContext,
+} from "../shared/capture-location-consent";
 import { audienceLabel, type NearbyPhoto } from "../shared/places";
-import { currentPlace, placesEnabled, setPlacesEnabled } from "./lib/location";
+import { currentPlace } from "./lib/location";
 import FilteredPhoto from "./FilteredPhoto";
 
 export default function CameraScreen({
@@ -39,13 +48,18 @@ export default function CameraScreen({
   done,
   close,
   reference = null,
+  cameraLink,
 }: {
   userId: string;
   done: () => void;
   close: () => void;
   reference?: NearbyPhoto | null;
+  cameraLink: number;
 }) {
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission, getPermission] = useCameraPermissions();
+  const prompted = useRef(false);
+  const requestingPermission = useRef(false);
+  const [permissionError, setPermissionError] = useState("");
   const camera = useRef<CameraView>(null);
   const uriRef = useRef<string | undefined>(undefined);
   const generation = useRef(0);
@@ -53,64 +67,152 @@ export default function CameraScreen({
   const keyRef = useRef<string | null>(null);
   const mounted = useRef(true);
   const submission = useRef<CaptureSubmission | null>(null);
-  const locationGeneration = useRef(0);
+  const locationConsent = useRef(new CaptureLocationConsent());
   const [facing, setFacing] = useState<"back" | "front">("back");
+  const [kind, setKind] = useState<MediaKind>("photo");
+  const [recordingAt, setRecordingAt] = useState<number | null>(null);
+  const recordingView = useRef<CameraView | null>(null);
+  const [seconds, setSeconds] = useState(0);
+  const [history, setHistory] = useState(false);
+  const [postOptions, setPostOptions] = useState(false);
+  const [receipt, setReceipt] = useState<CertificateReceipt | null>(null);
+  const [lastId, setLastId] = useState("");
+  const [certError, setCertError] = useState("");
+  const lastIdRef = useRef("");
+  const sharing = useRef(false);
+  const [shareBusy, setShareBusy] = useState(false);
+  const tickets = useRef<{ private?: Promise<Challenge>; social?: Promise<Challenge> }>({});
+  const [armed, setArmed] = useState<{ kind: MediaKind; certificate: Challenge; social: Challenge | null } | null>(null);
+  const [armingError, setArmingError] = useState("");
+  const [armRevision, setArmRevision] = useState(0);
   const [ready, setReady] = useState(false);
   const [active, setActive] = useState(AppState.currentState === "active");
   const [photo, setPhoto] = useState<{
     uri: string;
-    challenge: Challenge;
+    challenge: Challenge | null;
   } | null>(null);
   const [size, setSize] = useState<string>();
   const [caption, setCaption] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [remaining, setRemaining] = useState(180);
-  const [context, setContext] = useState<CaptureContext>(() => ({
-    ...emptyCaptureContext(),
-    referencePostId: reference?.post_id ?? null,
-  }));
+  const [context, setContext] = useState<CaptureContext>(() =>
+    newPhotoCaptureContext(reference?.post_id ?? null),
+  );
   const [locked, setLocked] = useState(false);
   const [prepared, setPrepared] = useState(false);
   const [terminal, setTerminal] = useState(false);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState("");
   const [overlay, setOverlay] = useState(0.35);
-  async function locate(askPermission = false) {
-    if (submission.current) return;
-    const current = ++locationGeneration.current;
+  useEffect(() => { setHistory(false); }, [cameraLink]);
+  const askForCamera = useCallback(async () => {
+    if (requestingPermission.current) return;
+    requestingPermission.current = true;
+    setPermissionError("");
+    try {
+      const result = await requestPermission();
+      if (mounted.current && result.status === "undetermined")
+        setPermissionError("카메라 권한을 확인하지 못했어요.");
+    } catch {
+      if (mounted.current) setPermissionError("카메라 권한을 확인하지 못했어요.");
+    } finally {
+      requestingPermission.current = false;
+    }
+  }, [requestPermission]);
+  useEffect(() => {
+    if (!active || prompted.current || permission?.status !== "undetermined") return;
+    prompted.current = true;
+    void askForCamera();
+  }, [active, permission?.status, askForCamera]);
+  function reserve(use: "private" | "social") {
+    if (!tickets.current[use]) {
+      const pending = captureApi<Challenge>({ action: "challenge", purpose: use === "private" ? "certify" : "capture" }, userId);
+      tickets.current[use] = pending;
+      void pending.catch(() => {
+        if (tickets.current[use] === pending) delete tickets.current[use];
+      });
+    }
+    return tickets.current[use]!;
+  }
+  async function freshTicket(use: "private" | "social") {
+    const pending = reserve(use);
+    const ticket = await pending;
+    // Leave enough time for the native recording, proof and first network request.
+    if (Date.parse(ticket.expires_at) - Date.now() <= (CAPTURE_CERT_VIDEO_SECONDS + 30) * 1000) {
+      if (tickets.current[use] === pending) delete tickets.current[use];
+      return reserve(use);
+    }
+    return ticket;
+  }
+  useEffect(() => {
+    setArmed(null);
+    setArmingError("");
+    if (!active || !permission?.granted || photo || history || pendingRef.current) return;
+    let current = true;
+    let expiry: ReturnType<typeof setTimeout>;
+    void prepareCamera(userId).then(async key => {
+      if (!current) return;
+      keyRef.current = key;
+      const [certificate, social] = await Promise.all([
+        freshTicket("private"),
+        kind === "photo" ? freshTicket("social").catch(() => null) : null,
+      ]);
+      if (!current) return;
+      setArmed({ kind, certificate, social });
+      const expires = Math.min(Date.parse(certificate.expires_at), social ? Date.parse(social.expires_at) : Infinity);
+      expiry = setTimeout(() => setArmRevision(n => n + 1), Math.max(1000, expires - Date.now() - (CAPTURE_CERT_VIDEO_SECONDS + 30) * 1000));
+    }).catch(e => {
+      if (current) setArmingError(e instanceof Error ? e.message : "촬영 인증을 준비하지 못했어요.");
+    });
+    return () => { current = false; clearTimeout(expiry); };
+  }, [active, permission?.granted, photo, history, kind, userId, armRevision]);
+  useEffect(() => observeCertificates(event => {
+    if (event.owner !== userId || event.challengeId !== lastIdRef.current) return;
+    if (event.receipt) setReceipt(event.receipt);
+    if (event.error) setCertError(event.error);
+  }), [userId]);
+  useEffect(() => {
+    if (recordingAt === null) return;
+    const timer = setInterval(() => setSeconds(Math.min(CAPTURE_CERT_VIDEO_SECONDS, Math.floor((Date.now() - recordingAt) / 1000))), 250);
+    return () => clearInterval(timer);
+  }, [recordingAt]);
+  async function locate() {
+    if (
+      !photo ||
+      submission.current ||
+      pendingRef.current ||
+      locating ||
+      AppState.currentState !== "active"
+    )
+      return;
+    const request = locationConsent.current.request(
+      photo.uri,
+      context.place?.audience ?? "followers",
+    );
+    if (!request) return;
+    const isCurrent = () =>
+      mounted.current &&
+      locationConsent.current.accepts(request) &&
+      !submission.current;
     setLocating(true);
     setLocationError("");
     try {
-      const place = await currentPlace(
-        context.place?.audience ?? "followers",
-        askPermission,
-      );
-      if (
-        !mounted.current ||
-        current !== locationGeneration.current ||
-        submission.current
-      )
-        return;
-      if (askPermission) await setPlacesEnabled(userId, true);
-      if (
-        mounted.current &&
-        current === locationGeneration.current &&
-        !submission.current
-      )
+      const place = await currentPlace(request.audience, true, isCurrent);
+      if (isCurrent() && AppState.currentState === "active")
         setContext((old) => ({ ...old, place }));
     } catch (e) {
-      if (mounted.current && current === locationGeneration.current)
+      if (isCurrent())
         setLocationError(
           e instanceof Error ? e.message : "위치를 확인하지 못했어요.",
         );
     } finally {
-      if (mounted.current && current === locationGeneration.current)
-        setLocating(false);
+      if (isCurrent()) setLocating(false);
     }
   }
   function removePlace() {
-    locationGeneration.current++;
+    if (submission.current) return;
+    locationConsent.current.cancel();
     setLocating(false);
     setLocationError("");
     setContext((old) => ({ ...old, place: null }));
@@ -120,6 +222,7 @@ export default function CameraScreen({
     discardPhoto(uriRef.current);
     uriRef.current = undefined;
     setPhoto(null);
+    setPostOptions(false);
     setCaption("");
     setError("");
     setReady(false);
@@ -127,38 +230,47 @@ export default function CameraScreen({
     setLocked(false);
     setPrepared(false);
     setTerminal(false);
+    locationConsent.current.startPhoto(null);
     removePlace();
-    setContext({
-      ...emptyCaptureContext(),
-      referencePostId: reference?.post_id ?? null,
-    });
+    setContext(newPhotoCaptureContext(reference?.post_id ?? null));
   };
   useEffect(() => {
     mounted.current = true;
     const listener = AppState.addEventListener("change", (state) => {
       setActive(state === "active");
+      if (state === "active" && !requestingPermission.current) {
+        void getPermission().catch(() => {
+          if (mounted.current) setPermissionError("카메라 권한을 확인하지 못했어요.");
+        });
+      }
       if (state !== "active") {
+        recordingView.current?.stopRecording();
         setReady(false);
         // Pause live capture; preserve the photographed draft and prepared upload.
         generation.current++;
+      }
+      if (state === "background") {
+        locationConsent.current.cancel();
+        setLocating(false);
       }
     });
     return () => {
       generation.current++;
       mounted.current = false;
-      locationGeneration.current++;
+      locationConsent.current.startPhoto(null);
       listener.remove();
       discardPhoto(uriRef.current);
     };
-  }, []);
+  }, [getPermission]);
   useEffect(() => {
-    if (!photo) return;
+    const challenge = photo?.challenge;
+    if (!challenge) return;
     const update = () =>
       setRemaining(
         Math.max(
           0,
           Math.ceil(
-            (Date.parse(photo.challenge.expires_at) - Date.now()) / 1000,
+            (Date.parse(challenge.expires_at) - Date.now()) / 1000,
           ),
         ),
       );
@@ -170,56 +282,82 @@ export default function CameraScreen({
     if (
       !camera.current ||
       !ready ||
+      armed?.kind !== kind ||
+      !tickets.current.private ||
       pendingRef.current ||
       AppState.currentState !== "active"
     )
       return;
+    if (Date.parse(armed.certificate.expires_at) <= Date.now() + CAPTURE_CERT_VIDEO_SECONDS * 1000) {
+      setArmRevision(n => n + 1);
+      return;
+    }
+    const { certificate, social } = armed;
+    setArmed(null);
+    delete tickets.current.private;
+    if (kind === "photo") delete tickets.current.social;
     pendingRef.current = true;
     setError("");
-    const current = generation.current;
     try {
-      setStatus("공식 앱을 확인하는 중…");
-      keyRef.current = await prepareCamera(userId);
-      const challenge = await captureApi<Challenge>({
-        action: "challenge",
-        purpose: "capture",
-      });
-      if (current !== generation.current || AppState.currentState !== "active")
-        return;
-      setStatus("지금의 순간을 담는 중…");
-      const result = await camera.current.takePictureAsync({
-        quality: 0.65,
-        exif: false,
-        skipProcessing: false,
-      });
+      const view = camera.current;
+      if (!view) return;
+      let result: { uri: string } | undefined;
+      if (kind === "video") {
+        recordingView.current = view;
+        setSeconds(0);
+        setRecordingAt(Date.now());
+        setStatus("녹화 중");
+        result = await view.recordAsync({
+          maxDuration: CAPTURE_CERT_VIDEO_SECONDS,
+          maxFileSize: CAPTURE_CERT_MAX_BYTES - 65_536,
+          codec: "avc1",
+        });
+        recordingView.current = null;
+        if (mounted.current) setRecordingAt(null);
+      } else {
+        setStatus("사진 촬영 중…");
+        result = await view.takePictureAsync({ quality: 0.65, exif: false, skipProcessing: false });
+      }
       if (!result) throw new Error("다시 촬영해 주세요.");
-      if (
-        current !== generation.current ||
-        AppState.currentState !== "active"
-      ) {
+      // A file finalized while moving to the background still belongs to the
+      // shutter press that started it. Account changes unmount this screen.
+      if (!mounted.current) {
         discardPhoto(result.uri);
         return;
       }
+      setStatus("비공개 원본 저장 중…");
+      lastIdRef.current = certificate.id;
+      setLastId("");
+      setCertError("");
+      setReceipt(null);
+      try {
+        await saveCapture(userId, certificate, kind, result.uri);
+      } catch (e) {
+        discardPhoto(result.uri);
+        throw e;
+      }
+      if (kind === "video" || !mounted.current) discardPhoto(result.uri);
+      if (!mounted.current) return;
+      setLastId(certificate.id);
+      if (kind === "video") return;
       uriRef.current = result.uri;
-      setPhoto({ uri: result.uri, challenge });
+      locationConsent.current.startPhoto(result.uri);
+      setContext(newPhotoCaptureContext(reference?.post_id ?? null));
+      setLocationError("");
+      setPhoto({ uri: result.uri, challenge: social });
       setRemaining(180);
-      if (
-        (await placesEnabled(userId)) &&
-        mounted.current &&
-        current === generation.current
-      )
-        void locate();
     } catch (e) {
       if (mounted.current)
         setError(e instanceof Error ? e.message : "촬영을 시작하지 못했어요.");
     } finally {
+      recordingView.current = null;
       pendingRef.current = false;
-      if (mounted.current) setStatus("");
+      if (mounted.current) { setRecordingAt(null); setStatus(""); setArmRevision(n => n + 1); }
     }
   }
   async function publish() {
     if (
-      !photo ||
+      !photo?.challenge ||
       pendingRef.current ||
       locating ||
       terminal ||
@@ -231,12 +369,13 @@ export default function CameraScreen({
     setError("");
     setLocked(true);
     try {
+      const challenge = photo.challenge;
       if (!submission.current)
         submission.current = new CaptureSubmission(
           () =>
             prepareCaptureRequest(
               userId,
-              photo.challenge,
+              challenge,
               photo.uri,
               caption,
               keyRef.current,
@@ -244,7 +383,8 @@ export default function CameraScreen({
             ),
           (request) => captureApi<{ id: string }>(request, userId),
         );
-      await submission.current.submit();
+      const draft = submission.current;
+      await withAttestation(() => draft.submit());
       discardPhoto(photo.uri);
       uriRef.current = undefined;
       if (mounted.current) done();
@@ -267,7 +407,35 @@ export default function CameraScreen({
       if (mounted.current) setStatus("");
     }
   }
-  if (!permission)
+  async function shareLast() {
+    if (!receipt || sharing.current) return;
+    sharing.current = true;
+    setShareBusy(true);
+    setError("");
+    try {
+      await shareCertificate(userId, receipt.id, () => mounted.current);
+    } catch (e) {
+      if (mounted.current) setError(e instanceof Error ? e.message : "인증서를 공유하지 못했어요.");
+    } finally {
+      sharing.current = false;
+      if (mounted.current) setShareBusy(false);
+    }
+  }
+  const receiptControls = !!lastId && (
+    <View style={s.receipt}>
+      <Text style={s.sectionTitle} accessibilityLiveRegion="polite">
+        {certError ? "인증 실패" : receipt ? certificateLabel[receipt.status] : "비공개 인증서 전송 대기"}
+      </Text>
+      {!!certError && <Text style={s.error}>{certError}</Text>}
+      <View style={s.receiptActions}>
+        {receipt && <Pressable accessibilityRole="button" disabled={shareBusy} style={s.primary} onPress={() => void shareLast()}>
+          <Text style={s.primaryText}>{shareBusy ? "공유 준비 중…" : "인증서 공유"}</Text>
+        </Pressable>}
+        <Pressable accessibilityRole="button" disabled={!!status || shareBusy} style={s.button} onPress={() => { setReady(false); setHistory(true); }}><Text>내 인증서 보기</Text></Pressable>
+      </View>
+    </View>
+  );
+  if (!permission || (permission.status === "undetermined" && !permissionError))
     return (
       <View style={s.center}>
         <ActivityIndicator />
@@ -276,17 +444,14 @@ export default function CameraScreen({
   if (!permission.granted)
     return (
       <View style={s.permission}>
-        <Text style={s.title}>당신의 시선이 필요해요.</Text>
-        <Text style={s.muted}>
-          nepeel은 직접 촬영한 사진만 게시할 수 있어요. 갤러리에는 접근하지
-          않습니다.
-        </Text>
+        <Text style={s.title}>{permissionError || "촬영하려면 카메라 권한이 필요해요."}</Text>
         <Pressable
+          accessibilityRole="button"
           style={s.primary}
           onPress={() =>
             permission.canAskAgain
-              ? void requestPermission()
-              : void Linking.openSettings()
+              ? void askForCamera()
+              : void Linking.openSettings().catch(() => setPermissionError("기기 설정에서 카메라 권한을 허용해 주세요."))
           }
         >
           <Text style={s.primaryText}>
@@ -295,7 +460,7 @@ export default function CameraScreen({
               : "설정에서 카메라 허용"}
           </Text>
         </Pressable>
-        <Pressable style={s.button} onPress={close}>
+        <Pressable accessibilityRole="button" style={s.button} onPress={close}>
           <Text>돌아가기</Text>
         </Pressable>
       </View>
@@ -318,7 +483,9 @@ export default function CameraScreen({
         <Pressable
           disabled={!!status || !!photo}
           onPress={() => {
+            generation.current++;
             setReady(false);
+            setSize(undefined);
             setFacing((v) => (v === "back" ? "front" : "back"));
           }}
           style={s.button}
@@ -329,21 +496,25 @@ export default function CameraScreen({
       <View style={s.camera}>
         {photo ? (
           <FilteredPhoto uri={photo.uri} filter={context.filter} />
-        ) : active ? (
+        ) : active && !history ? (
           <CameraView
+            key={`${kind}-${facing}`}
             ref={camera}
             style={StyleSheet.absoluteFill}
             facing={facing}
-            mode="picture"
-            pictureSize={size}
+            mode={kind === "video" ? "video" : "picture"}
+            mute
+            videoQuality="480p"
+            videoBitrate={800_000}
+            pictureSize={kind === "photo" ? size : undefined}
             onMountError={() =>
               setError("카메라를 열지 못했어요. 권한을 확인해 주세요.")
             }
             onCameraReady={async () => {
               const current = generation.current;
               try {
-                const sizes =
-                  await camera.current?.getAvailablePictureSizesAsync();
+                const sizes = kind === "photo"
+                  ? await camera.current?.getAvailablePictureSizesAsync() : [];
                 const candidates = sizes
                   ?.filter((v) => /^\d+x\d+$/.test(v))
                   .map((v) => ({
@@ -353,9 +524,9 @@ export default function CameraScreen({
                       .map(Number)
                       .reduce((a, b) => a * b),
                   }))
-                  .filter((v) => v.pixels <= 2_000_000)
-                  .sort((a, b) => b.pixels - a.pixels);
-                if (candidates?.[0]) setSize(candidates[0].value);
+                  .sort((a, b) => a.pixels - b.pixels);
+                const choice = candidates?.filter(v => v.pixels <= 1_500_000).at(-1) ?? candidates?.[0];
+                if (choice && current === generation.current) setSize(choice.value);
               } catch {
                 /* Camera default remains available. */
               }
@@ -420,6 +591,18 @@ export default function CameraScreen({
       >
         {photo ? (
           <>
+            {receiptControls}
+            <View style={s.row}>
+              <Pressable accessibilityRole="button" style={s.secondary} disabled={!!status || shareBusy} onPress={reset}>
+                <Text>다음 촬영</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" accessibilityState={{ expanded: postOptions }}
+                style={s.button} disabled={!!status}
+                onPress={() => setPostOptions(value => !value)}>
+                <Text>{postOptions ? "게시 설정 닫기" : "필터 · 설명 · 장소"}</Text>
+              </Pressable>
+            </View>
+            {postOptions && <>
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -447,13 +630,6 @@ export default function CameraScreen({
                 </Pressable>
               ))}
             </ScrollView>
-            <Text style={s.muted}>
-              {prepared
-                ? "같은 사진·설정으로 게시를 다시 시도할 수 있어요."
-                : remaining > 0
-                  ? `${remaining}초 안에 이 순간을 나눠주세요.`
-                  : "시간이 지났어요. 새로운 순간을 촬영해 주세요."}
-            </Text>
             <TextInput
               style={s.input}
               placeholder="이 순간에 한마디"
@@ -465,9 +641,14 @@ export default function CameraScreen({
               accessibilityLabel="사진 설명"
             />
             <View style={s.placeCard}>
-              <Text style={s.sectionTitle}>촬영 장소</Text>
+              <Text style={s.sectionTitle}>촬영 장소 · 선택 사항</Text>
               <Text style={s.small}>
-                대략적인 위치만 공유해요. 친구의 현재 위치는 표시하지 않아요.
+                이 사진에 장소를 추가하면 대략적인 촬영 위치가 표시돼요.
+                친구의 현재 위치가 아니며, 게시 전 위치를 뺄 수 있어요.
+              </Text>
+              <Text style={s.small}>
+                기본 공개 범위는 팔로워예요. 팔로워는 별도 승인 없이 나를
+                팔로우한 모든 회원이며, 승인한 친구 목록이 아니에요.
               </Text>
               {context.place ? (
                 <>
@@ -520,22 +701,29 @@ export default function CameraScreen({
                 <Text style={s.muted}>
                   {locating
                     ? "촬영한 장소를 찾고 있어요…"
-                    : "위치를 사용하면 근처의 친구 사진과 연결돼요."}
+                    : "현재 이 사진에는 장소가 없어요. 장소 없이도 게시할 수 있어요."}
                 </Text>
               )}
               <View style={s.row}>
                 <Pressable
                   disabled={locked || locating}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: locked || locating, busy: locating }}
                   style={s.button}
-                  onPress={() => void locate(true)}
+                  onPress={() => void locate()}
                 >
                   <Text>
-                    {context.place ? "위치 다시 확인" : "촬영 장소 사용"}
+                    {locating
+                      ? "위치 확인 중…"
+                      : context.place
+                        ? "위치 다시 확인"
+                        : "촬영 장소 사용"}
                   </Text>
                 </Pressable>
                 {(context.place || locating) && (
                   <Pressable
                     disabled={locked}
+                    accessibilityRole="button"
                     style={s.button}
                     onPress={removePlace}
                   >
@@ -549,54 +737,79 @@ export default function CameraScreen({
                 </Text>
               )}
             </View>
+            </>}
+            {(!photo.challenge || remaining <= 0 || prepared) && <Text style={s.muted}>
+              {prepared ? "같은 사진과 설정으로 게시를 다시 시도할 수 있어요."
+                : !photo.challenge ? "이 사진의 피드 게시를 준비하지 못했어요."
+                : "피드 게시 시간이 지났어요. 새 사진을 촬영해 주세요."}
+            </Text>}
             <View style={s.row}>
               <Pressable
-                style={s.secondary}
-                disabled={!!status}
-                onPress={reset}
-              >
-                <Text>다시 촬영</Text>
-              </Pressable>
-              <Pressable
+                accessibilityRole="button"
                 style={[
                   s.primary,
                   s.flex,
                   (!!status ||
                     locating ||
-                    terminal ||
+                    terminal || !photo.challenge ||
                     (!prepared && remaining <= 0)) &&
                     s.disabled,
                 ]}
                 disabled={
                   !!status ||
                   locating ||
-                  terminal ||
+                  terminal || !photo.challenge ||
                   (!prepared && remaining <= 0)
                 }
                 onPress={() => void publish()}
               >
                 <Text style={s.primaryText}>
-                  {prepared ? "다시 게시하기 ↗" : "순간 나누기 ↗"}
+                  {prepared ? "다시 게시하기 ↗" : "피드에 게시 ↗"}
                 </Text>
               </Pressable>
             </View>
           </>
         ) : (
           <>
-            <Text style={s.muted}>지금, 눈앞의 진짜 순간.</Text>
+            <View style={s.receiptActions}>
+              {(["photo", "video"] as const).map(next => (
+                <Pressable
+                  key={next}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: kind === next, disabled: !!status }}
+                  disabled={!!status}
+                  style={[s.filterChip, kind === next && s.filterSelected]}
+                  onPress={() => {
+                    if (kind === next || pendingRef.current) return;
+                    generation.current++;
+                    setReady(false);
+                    setKind(next);
+                    setError("");
+                  }}
+                ><Text style={s.filterText}>{next === "photo" ? "사진" : "영상"}</Text></Pressable>
+              ))}
+            </View>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="사진 촬영"
-              disabled={!ready || !!status}
-              style={[s.shutter, (!ready || !!status) && s.disabled]}
-              onPress={() => void capture()}
+              accessibilityLabel={recordingAt !== null ? "녹화 중지" : kind === "photo" ? "사진 촬영" : "영상 녹화"}
+              disabled={recordingAt === null && (!ready || armed?.kind !== kind || !!status)}
+              style={[s.shutter, recordingAt === null && (!ready || armed?.kind !== kind || !!status) && s.disabled]}
+              onPress={() => recordingAt === null ? void capture() : camera.current?.stopRecording()}
             >
-              <View style={s.shutterInner} />
+              <View style={[s.shutterInner, recordingAt !== null && s.stop]} />
             </Pressable>
-            <Text style={s.small}>외부 사진 · AI 생성 이미지 업로드 불가</Text>
+            {armingError ? <>
+              <Text accessibilityRole="alert" style={s.error}>{armingError}</Text>
+              <Pressable accessibilityRole="button" style={s.button} onPress={() => setArmRevision(n => n + 1)}><Text>촬영 준비 다시 시도</Text></Pressable>
+            </> : <Text style={s.muted}>
+              {recordingAt !== null ? `녹화 중 · ${seconds} / ${CAPTURE_CERT_VIDEO_SECONDS}초`
+                : !armed && !status ? "촬영 인증 준비 중…"
+                : kind === "video" ? `무음 · 최대 ${CAPTURE_CERT_VIDEO_SECONDS}초 · 비공개 인증` : "촬영하면 비공개로 인증돼요."}
+            </Text>}
           </>
         )}
-        {status ? (
+        {!photo && !status && receiptControls}
+        {status && recordingAt === null ? (
           <View style={s.row}>
             <ActivityIndicator />
             <Text style={s.muted}>{status}</Text>
@@ -608,6 +821,7 @@ export default function CameraScreen({
           </Text>
         ) : null}
       </ScrollView>
+      {history && <CertificateHistory userId={userId} close={() => setHistory(false)} />}
     </KeyboardAvoidingView>
   );
 }
@@ -620,7 +834,7 @@ const s = StyleSheet.create({
     padding: 8,
   },
   logo: { fontSize: 17, fontWeight: "800", letterSpacing: -0.7 },
-  button: { padding: 13, minHeight: 44 },
+  button: { padding: 13, minHeight: 48, justifyContent: "center" },
   camera: { flex: 1, backgroundColor: "#20221d" },
   reviewScroll: { flexGrow: 0, maxHeight: "55%" },
   controls: { padding: 22, gap: 16, alignItems: "center" },
@@ -658,6 +872,9 @@ const s = StyleSheet.create({
     padding: 5,
   },
   shutterInner: { flex: 1, backgroundColor: "#d4ff3f", borderRadius: 33 },
+  stop: { borderRadius: 4, margin: 13, backgroundColor: "#ae3725" },
+  receipt: { width: "100%", gap: 8, alignItems: "center" },
+  receiptActions: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", alignItems: "center", gap: 8 },
   muted: { fontSize: 13, color: "#6d7463", lineHeight: 22 },
   small: { fontSize: 11, color: "#707369" },
   disabled: { opacity: 0.4 },

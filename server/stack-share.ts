@@ -7,6 +7,9 @@ export interface PublicStackItem {
   caption: string;
   sourceId?: string;
   credential?: string;
+  stackScoped?: boolean;
+  imagePath?: string;
+  mimeType?: string | null;
 }
 
 export interface PublicStack {
@@ -111,7 +114,9 @@ export async function serveStackShare(request: Request, source: StackShareSource
     // Ledger and storage calls can outlive either grant. Check the specific
     // stack and member again before handing back the first byte.
     const latest = (await source.resolve(token, itemId))?.items[0];
-    if (latest?.id !== itemId || latest.credential !== item.credential || latest.sourceId !== item.sourceId || latest.source !== item.source) {
+    if (latest?.id !== itemId || latest.credential !== item.credential || latest.sourceId !== item.sourceId ||
+        latest.source !== item.source || latest.stackScoped !== item.stackScoped || latest.imagePath !== item.imagePath ||
+        latest.mimeType !== item.mimeType) {
       await result.body?.cancel();
       return missing();
     }

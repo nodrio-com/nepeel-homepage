@@ -250,18 +250,18 @@ export function PostDialog({
           <h2><KindIcon size={19} aria-hidden="true" /><span>{post.sample ? title : kind}</span></h2>
           {navigable && (
             <nav className="viewer-paging" aria-label="게시물 이동">
-              <button type="button" aria-label="이전 게시물" title="이전 게시물 (←)" aria-disabled={!onPrevious || thread.posting}
+              <button type="button" aria-label="이전 게시물" aria-keyshortcuts="ArrowLeft" aria-disabled={!onPrevious || thread.posting}
                 onClick={() => { if (!thread.posting) onPrevious?.(); }}><ChevronLeft aria-hidden="true" /></button>
               {position != null && total != null && (
                 <span className="viewer-position" role="status" aria-atomic="true">
                   <b>{position}</b><span> / </span>{total}
                 </span>
               )}
-              <button type="button" aria-label="다음 게시물" title="다음 게시물 (→)" aria-disabled={!onNext || thread.posting}
+              <button type="button" aria-label="다음 게시물" aria-keyshortcuts="ArrowRight" aria-disabled={!onNext || thread.posting}
                 onClick={() => { if (!thread.posting) onNext?.(); }}><ChevronRight aria-hidden="true" /></button>
             </nav>
           )}
-          <button type="button" className="viewer-close" ref={closeButton} aria-label="닫기" title="닫기 (Esc)" disabled={thread.posting} onClick={requestClose}>
+          <button type="button" className="viewer-close" ref={closeButton} aria-label="닫기" aria-keyshortcuts="Escape" disabled={thread.posting} onClick={requestClose}>
             <X aria-hidden="true" />
           </button>
         </header>

@@ -14,7 +14,9 @@ import DeleteAccount from "./components/DeleteAccount";
 import { useEditorialSaves } from "./lib/editorial-saves";
 import { MediaGrid } from "./components/MediaGrid";
 import { readBrowseRoute, browseHash, type BrowseRoute, type MediaFilter, type View } from "./lib/browse-route";
-import { PostShareDialog, deliverPostLink, type SharedLink } from "./components/PostShareDialog";
+import { PostShareDialog, OwnerShareActions } from "./components/PostShareDialog";
+import { deliverMediaLink } from "./lib/share-link";
+import { useAppCamera } from "./lib/app-camera";
 import { accountAction } from "../shared/account";
 import {
   About,
@@ -152,7 +154,11 @@ export default function App() {
   const [modal, setModal] = useState<Modal>(null);
   const [report, setReport] = useState<Post | null>(null);
   const [deleting, setDeleting] = useState<Post | null>(null);
-  const [sharedLink, setSharedLink] = useState<SharedLink | null>(null);
+  const [createAfterLogin, setCreateAfterLogin] = useState(false);
+  const { openCamera, needsHelp: cameraHelp } = useAppCamera(() => setModal("camera"), view);
+  const searchTimer = useRef<number | undefined>(undefined);
+  const composingSearch = useRef(false);
+  useEffect(() => () => window.clearTimeout(searchTimer.current), [hash]);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState<string[]>([]);
   const busyRef = useRef(new Set<string>());
@@ -162,7 +168,7 @@ export default function App() {
   const editorialSaves = useEditorialSaves(userId);
   const [manualLink, setManualLink] = useState("");
   const [copied, setCopied] = useState("");
-  useEffect(() => { setCopied(""); }, [route.open]);
+  useEffect(() => { setCopied(""); setManualLink(""); }, [route.open, userId]);
   const profile = profileState?.id === userId ? profileState : null;
   const notify = (text: string) => setNotice(text);
   useEffect(() => {
@@ -180,7 +186,9 @@ export default function App() {
       window.removeEventListener("hashchange", sync);
     };
   }, []);
-  useEffect(() => { setSearchDraft(search); }, [view, search]);
+  useEffect(() => {
+    setSearchDraft(previous => view === "discover" && previous.trim() === search ? previous : search);
+  }, [view, search]);
   useEffect(() => { document.title = labels[view] + " · nepeel"; }, [view]);
   useEffect(() => {
     if (!supabase) return;
@@ -209,7 +217,8 @@ export default function App() {
         setProfile(null);
         setReport(null);
         setDeleting(null);
-        setSharedLink(null);
+        setManualLink("");
+        if (changedAccount) setCreateAfterLogin(false);
         if (changedAccount) setModal(null);
       }
     });
@@ -360,35 +369,30 @@ export default function App() {
       );
     });
   }
-  async function share(post: Post) {
-    if (!supabase || post.sample || post.user_id !== userId) return;
-    const client = supabase;
-    await run(`share-${post.id}`, async () => {
-      const { data, error } = await client.rpc("set_post_share_link", { p_post: post.id, p_enabled: true });
-      if (authUser.current !== post.user_id) return;
-      if (error || typeof data !== "string" || !/^[\w-]{43}$/.test(data)) {
-        notify("공유 링크를 만들지 못했어요. 다시 시도해 주세요.");
-        return;
-      }
-      const url = `${location.origin}/s/${data}`;
-      const status = await deliverPostLink(url);
-      if (authUser.current === post.user_id)
-        setSharedLink({ postId: post.id, userId: post.user_id, url, status });
-    });
+  function changeSearch(value: string) {
+    setSearchDraft(value);
+    window.clearTimeout(searchTimer.current);
+    if (view !== "discover" || composingSearch.current) return;
+    const at = location.hash;
+    searchTimer.current = window.setTimeout(() => {
+      if (location.hash === at)
+        navigate({ ...route, search: value.trim(), open: "" }, { replace: true });
+    }, 300);
   }
   function searchSubmit(e: FormEvent) {
     e.preventDefault();
+    if (composingSearch.current) return;
+    window.clearTimeout(searchTimer.current);
     navigate({ view: "discover", filter: view === "discover" ? filter : "all", search: searchDraft.trim(), open: "", postId: "" });
     window.scrollTo({ top: 0, behavior: "instant" });
   }
   async function shareEditorial(post: Post) {
     const url = new URL(browseHash({ view: "feed", filter: "all", search: "", open: post.id, postId: "" }), location.origin + "/").href;
-    if (navigator.share) {
-      try { await navigator.share({ url, title: post.caption }); return; }
-      catch (error) { if (error instanceof DOMException && error.name === "AbortError") return; }
-    }
-    try { await navigator.clipboard.writeText(url); setCopied(post.id); }
-    catch { setManualLink(url); }
+    const at = location.hash;
+    const result = await deliverMediaLink(url, post.caption);
+    if (location.hash !== at) return;
+    if (result === "copied") setCopied(post.id);
+    if (result === "manual") setManualLink(url);
   }
   const actions = (post: Post) => post.sample ? <div className="editorial-actions">
     <button type="button" aria-pressed={editorialSaves.ids.includes(post.id)}
@@ -416,16 +420,7 @@ export default function App() {
       >
         <MessageCircle />
       </button>
-      {post.user_id === userId && <button
-        className="icon-button"
-        aria-label="공개 링크로 게시물 공유"
-        title="공개 링크로 게시물 공유"
-        disabled={busy.includes(`share-${post.id}`)}
-        aria-busy={busy.includes(`share-${post.id}`)}
-        onClick={() => void share(post)}
-      >
-        {busy.includes(`share-${post.id}`) ? <LoaderCircle className="spin" /> : <Send />}
-      </button>}
+      {post.user_id === userId && <OwnerShareActions key={userId + ":" + post.id} postId={post.id} manual={setManualLink} />}
       {post.user_id !== userId && <button className="text-button" disabled={busy.includes("follow-" + post.user_id)}
         aria-pressed={post.following} onClick={() => void follow(post)}>{post.following ? "팔로잉" : "팔로우"}</button>}
       <button className="icon-button" aria-label={post.user_id === userId ? "게시물 삭제" : "게시물 신고"}
@@ -461,22 +456,25 @@ export default function App() {
             ))}
           </nav>
           <div className="browse-tools">
-            <form className="browse-search" role="search" onSubmit={searchSubmit}>
+            {view !== "discover" && <form className="browse-search" role="search" onSubmit={searchSubmit}>
               <button aria-label="검색" type="submit"><Search size={19} /></button>
               <input type="search" aria-label="사진, 영상, 사람 검색" placeholder="사진, 영상, 사람 검색" maxLength={80}
-                value={searchDraft} onChange={e => setSearchDraft(e.target.value)} />
-            </form>
+                value={searchDraft} onChange={e => changeSearch(e.target.value)} />
+            </form>}
             <a className="mobile-search-link" href="#discover" onClick={e => navClick(e,"discover")} aria-label="검색 열기"><Search size={21} /></a>
-            <button className="browse-camera" onClick={() => setModal("camera")}><Camera size={18} /><span>앱에서 촬영</span></button>
+            <a className="saved-shortcut" href="#saved" onClick={e => navClick(e,"saved")} aria-label="저장한 게시물" aria-current={view === "saved" ? "page" : undefined}><Bookmark size={19} fill={view === "saved" ? "currentColor" : "none"} /></a>
+            <button className="browse-camera" onClick={openCamera}><Camera size={18} /><span>앱에서 촬영</span></button>
             <button className="browse-account" onClick={() => session ? go("profile") : setModal("auth")} aria-label={session ? "내 프로필" : "로그인"}>
               {session ? <Avatar size="small" name={profile?.display_name ?? "나"}/> : <><UserRound size={19} /><span>로그인</span></>}
             </button>
           </div>
         </div>
       </header>
+      {cameraHelp && <div className="camera-launch-help"><button type="button" className="text-button"
+        onClick={() => setModal("camera")}>앱이 열리지 않나요?</button></div>}
       <main id="main" tabIndex={-1} className={"browse-main view-" + view}>
         {view !== "profile" && view !== "about" && view !== "hi" && <h1 className="visually-hidden">{labels[view]}</h1>}
-        {view === "about" && <About onCamera={() => setModal("camera")} />}
+        {view === "about" && <About onCamera={openCamera} />}
         {view === "hi" && <Suspense fallback={<p className="loading-state" role="status">연결 불러오는 중…</p>}>
           <Connections key={userId ?? "guest"} userId={userId} login={() => setModal("auth")} />
         </Suspense>}
@@ -500,13 +498,17 @@ export default function App() {
           </nav>
         </>}
         {view === "stacks" && (authReady ? <Suspense fallback={<p className="loading-state" role="status">묶음 불러오는 중…</p>}>
-          <MediaStacks key={userId ?? "guest"} userId={userId} login={() => setModal("auth")} />
+          <MediaStacks key={userId ?? "guest"} userId={userId}
+            login={() => { setCreateAfterLogin(true); setModal("auth"); }} startCreating={createAfterLogin}
+            onCreateIntentHandled={() => setCreateAfterLogin(false)} onCamera={openCamera} />
         </Suspense> : <p role="status" className="loading-state">묶음 불러오는 중…</p>)}
         {showFeed && <>
           {postLink && <button className="back-link" onClick={() => go("feed")}><ArrowLeft size={16}/> 피드로</button>}
           {view === "discover" && <form className="discover-field" role="search" onSubmit={searchSubmit}>
             <Search size={20} aria-hidden="true"/><input type="search" aria-label="탐색 검색어" placeholder="사진, 영상, 사람 검색"
-              value={searchDraft} onChange={e=>setSearchDraft(e.target.value)} maxLength={80}/>
+              value={searchDraft} onChange={e=>changeSearch(e.target.value)} maxLength={80}
+              onCompositionStart={() => { composingSearch.current = true; window.clearTimeout(searchTimer.current); }}
+              onCompositionEnd={e => { composingSearch.current = false; changeSearch(e.currentTarget.value); }}/>
             <button type="submit">검색</button>
           </form>}
           {!postLink && <div className="browse-filters">
@@ -515,8 +517,8 @@ export default function App() {
                 <button type="button" key={key} aria-pressed={filter === key} onClick={() => setFilter(key as MediaFilter)}>{label}</button>)}
             </div>
             <div className="density-group" aria-label="그리드 간격">
-              <button type="button" aria-label="기본 그리드" title="기본 그리드" aria-pressed={!dense} onClick={() => changeDensity(false)}><Grid2X2 size={18}/></button>
-              <button type="button" aria-label="촘촘한 그리드" title="촘촘한 그리드" aria-pressed={dense} onClick={() => changeDensity(true)}><Grid3X3 size={18}/></button>
+              <button type="button" aria-label="기본 그리드" aria-pressed={!dense} onClick={() => changeDensity(false)}><Grid2X2 size={18}/></button>
+              <button type="button" aria-label="촘촘한 그리드" aria-pressed={dense} onClick={() => changeDensity(true)}><Grid3X3 size={18}/></button>
             </div>
           </div>}
           {search && <div className="search-summary"><span>‘{search}’ 검색 결과</span><button aria-label="검색 지우기" onClick={() => go("discover")}><X size={16}/></button></div>}
@@ -557,22 +559,15 @@ export default function App() {
       )}
       {modal === "auth" && (
         <AuthDialog
-          close={() => setModal(null)}
+          close={() => { setCreateAfterLogin(false); setModal(null); }}
           onDone={() => {
             setModal(null);
-            notify("로그인했어요.");
+            if (!createAfterLogin) notify("로그인했어요.");
           }}
         />
       )}
-      {manualLink && <Dialog title="공유 링크" close={() => setManualLink("")}><label className="manual-link">링크 복사<input type="url" value={manualLink} readOnly onFocus={e => e.target.select()} autoFocus /></label></Dialog>}
+      {manualLink && <PostShareDialog url={manualLink} close={() => setManualLink("")} />}
       {modal === "camera" && <CameraDialog close={() => setModal(null)} />}
-      {sharedLink && sharedLink.userId === userId && <PostShareDialog key={sharedLink.url}
-        link={sharedLink} close={() => setSharedLink(null)}
-        onRevoked={() => {
-          setSharedLink(null);
-          if (authUser.current === sharedLink.userId) notify("공유 링크를 끊었어요.");
-        }}
-      />}
       {modal === "edit" && profile && (
         <EditProfile
           profile={profile}

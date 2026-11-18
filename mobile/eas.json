@@ -2,7 +2,12 @@
   "cli": { "version": ">= 16.0.0", "appVersionSource": "remote" },
   "build": {
     "development": { "developmentClient": true, "distribution": "internal", "env": { "APP_ATTEST_ENVIRONMENT": "development" } },
-    "preview": { "distribution": "internal" },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_ANDROID_ATTESTATION": "hardware"
+      }
+    },
     "production": { "autoIncrement": true, "android": { "buildType": "app-bundle" }, "env": { "EXPO_PUBLIC_API_URL": "https://nepeel.com" } }
   },
   "submit": { "production": {} }
