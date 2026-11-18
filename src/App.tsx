@@ -1,31 +1,9 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { FormEvent, MouseEvent, ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
-  Aperture,
-  ArrowDown,
-  ArrowLeft,
-  ArrowRight,
-  ArrowUpRight,
-  Bookmark,
-  Camera,
-  Check,
-  ChevronRight,
-  Compass,
-  Flag,
-  Heart,
-  Home,
-  Info,
-  LoaderCircle,
-  LogOut,
-  MessageCircle,
-  RefreshCw,
-  Search,
-  Send,
-  ShieldCheck,
-  Trash2,
-  UserRound,
-  X,
+  Aperture, ArrowDown, ArrowLeft, Bookmark, Camera, Check, Compass, Flag, Grid2X2, Grid3X3,
+  Heart, Home, Layers, LoaderCircle, MessageCircle, Search, Send, Settings, Trash2, UserRound, X,
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import { sampleMeta, samplePosts } from "./lib/samples";
@@ -33,7 +11,9 @@ import { getProfile, setFollowing, setReaction } from "../shared/data";
 import { useFeed } from "./useFeed";
 import type { FeedMode, Post, Profile } from "../shared/types";
 import DeleteAccount from "./components/DeleteAccount";
-import PhotoPlace from "./components/PhotoPlace";
+import { useEditorialSaves } from "./lib/editorial-saves";
+import { MediaGrid } from "./components/MediaGrid";
+import { readBrowseRoute, browseHash, type BrowseRoute, type MediaFilter, type View } from "./lib/browse-route";
 import { PostShareDialog, deliverPostLink, type SharedLink } from "./components/PostShareDialog";
 import { accountAction } from "../shared/account";
 import {
@@ -47,22 +27,20 @@ import {
 } from "./components/dialogs";
 
 const Connections = lazy(() => import("./components/Connections"));
-type View = "feed" | "discover" | "saved" | "profile" | "about" | "hi";
+const MediaStacks = lazy(() => import("./components/MediaStacks"));
+
 type Modal = "auth" | "camera" | "edit" | "recovery" | "deleteAccount" | null;
 const navigation = [
   { id: "feed", label: "홈", icon: Home },
   { id: "discover", label: "탐색", icon: Compass },
+  { id: "stacks", label: "묶음", icon: Layers },
   { id: "hi", label: "Hi 연결", icon: Send },
-  { id: "saved", label: "저장", icon: Bookmark },
   { id: "profile", label: "프로필", icon: UserRound },
 ] as const;
-const readView = (): View =>
-  ["feed", "discover", "saved", "profile", "about", "hi"].includes(
-    location.hash.slice(1),
-  )
-    ? (location.hash.slice(1) as View)
-    : "feed";
-const sampleTitle = (post: Post) => sampleMeta.find(item => item.id === post.id)?.tag ?? "예시 사진";
+const labels: Record<View, string> = {
+  feed: "홈", discover: "탐색", saved: "저장", profile: "프로필",
+  about: "서비스 소개", hi: "Hi 연결", stacks: "묶음",
+};
 export function readableError(error: unknown) {
   const message =
     error && typeof error === "object" && "message" in error
@@ -79,20 +57,6 @@ export function readableError(error: unknown) {
   if (/password/i.test(message))
     return "비밀번호는 8자 이상으로 입력해 주세요.";
   return "연결을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.";
-}
-function timeLabel(post: Post) {
-  if (post.sample) return "예시 사진";
-  const minutes = Math.max(
-    0,
-    Math.floor((Date.now() - Date.parse(post.created_at)) / 60000),
-  );
-  return minutes < 1
-    ? "방금 전"
-    : minutes < 60
-      ? `${minutes}분 전`
-      : minutes < 1440
-        ? `${Math.floor(minutes / 60)}시간 전`
-        : new Date(post.created_at).toLocaleDateString("ko-KR");
 }
 export function Avatar({
   name,
@@ -129,10 +93,14 @@ export function Dialog({
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current!;
+    const opener = document.activeElement;
     el.showModal();
-    return () => el.close();
+    return () => {
+      el.close();
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true });
+    };
   }, []);
   return (
     <dialog
@@ -158,16 +126,30 @@ export function Dialog({
 }
 
 export default function App() {
-  const [view, setView] = useState<View>(readView);
+  const [hash, setHash] = useState(() => location.hash);
+  const route = readBrowseRoute(hash);
+  const { view, filter, search, postId: postLink } = route;
+  const [dense, setDense] = useState(() => {
+    try { return localStorage.getItem("nepeel.grid.dense") === "1"; } catch { return false; }
+  });
+  function changeDensity(value: boolean) {
+    setDense(value);
+    try { localStorage.setItem("nepeel.grid.dense", value ? "1" : "0"); } catch { /* Storage can be unavailable in private browsing. */ }
+  }
+  function navigate(next: BrowseRoute, options: { replace?: boolean; viewer?: boolean } = {}) {
+    const to = browseHash(next);
+    if (to === location.hash) return;
+    const state = options.viewer ? { nepeelViewer: true } : null;
+    if (options.replace) history.replaceState(state, "", to);
+    else history.pushState(state, "", to);
+    setHash(to);
+  }
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(!supabase);
   const [profileState, setProfile] = useState<Profile | null>(null);
-  const [mode, setMode] = useState<"all" | "following">("all");
-  const [searchDraft, setSearchDraft] = useState("");
-  const [search, setSearch] = useState("");
+  const [searchDraft, setSearchDraft] = useState(search);
   const [refresh, setRefresh] = useState(0);
   const [modal, setModal] = useState<Modal>(null);
-  const [detail, setDetail] = useState<Post | null>(null);
   const [report, setReport] = useState<Post | null>(null);
   const [deleting, setDeleting] = useState<Post | null>(null);
   const [sharedLink, setSharedLink] = useState<SharedLink | null>(null);
@@ -175,11 +157,12 @@ export default function App() {
   const [busy, setBusy] = useState<string[]>([]);
   const busyRef = useRef(new Set<string>());
   const authUser = useRef<string | null>(null);
-  const [postLink, setPostLink] = useState(() =>
-    location.hash.startsWith("#post/") ? location.hash.slice(6) : "",
-  );
   const preview = !session;
   const userId = session?.user.id;
+  const editorialSaves = useEditorialSaves(userId);
+  const [manualLink, setManualLink] = useState("");
+  const [copied, setCopied] = useState("");
+  useEffect(() => { setCopied(""); }, [route.open]);
   const profile = profileState?.id === userId ? profileState : null;
   const notify = (text: string) => setNotice(text);
   useEffect(() => {
@@ -189,18 +172,16 @@ export default function App() {
     }
   }, [notice]);
   useEffect(() => {
-    const onHash = () => {
-      const nextView = readView();
-      setView(nextView);
-      if (nextView !== "discover") { setSearch(""); setSearchDraft(""); }
-      setDetail(null);
-      setPostLink(
-        location.hash.startsWith("#post/") ? location.hash.slice(6) : "",
-      );
+    const sync = () => setHash(location.hash);
+    window.addEventListener("popstate", sync);
+    window.addEventListener("hashchange", sync);
+    return () => {
+      window.removeEventListener("popstate", sync);
+      window.removeEventListener("hashchange", sync);
     };
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
   }, []);
+  useEffect(() => { setSearchDraft(search); }, [view, search]);
+  useEffect(() => { document.title = labels[view] + " · nepeel"; }, [view]);
   useEffect(() => {
     if (!supabase) return;
     let active = true;
@@ -226,7 +207,6 @@ export default function App() {
       if (event === "PASSWORD_RECOVERY") setModal("recovery");
       if (!next || changedAccount) {
         setProfile(null);
-        setDetail(null);
         setReport(null);
         setDeleting(null);
         setSharedLink(null);
@@ -263,9 +243,9 @@ export default function App() {
         ? "profile"
         : view === "discover"
           ? "all"
-          : mode;
+          : filter === "following" ? "following" : "all";
   const feed = useFeed({
-    client: supabase, userId, enabled: authReady && view !== "hi" && view !== "about",
+    client: supabase, userId, enabled: authReady && view !== "hi" && view !== "about" && view !== "stacks",
     scope: view, mode: feedMode, search: view === "discover" ? search : "", postId: postLink, refresh,
   });
   const { setPosts, loading, hasMore, nextPage, loadingMore: loadMore } = feed;
@@ -276,19 +256,51 @@ export default function App() {
     return () => document.removeEventListener("visibilitychange", resume);
   }, [reloadFeed]);
   const error = feed.error ? "피드를 불러오지 못했어요. 연결을 확인하고 다시 시도해 주세요." : "";
-  const posts = !userId && authReady
-    ? view === "saved" || view === "profile" || (mode === "following" && view === "feed")
-      ? []
-      : samplePosts.filter((post) => view !== "discover" || `${post.caption} ${post.display_name} ${post.username}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
-    : feed.posts;
-  const go = (next: View) => {
-    setSearch("");
-    setSearchDraft("");
-    setDetail(null);
-    location.hash = next;
-    setView(next);
+  const canBrowse = view === "feed" || view === "discover";
+  const editorial = canBrowse && !postLink && filter !== "following" && authReady
+    ? samplePosts.filter(p => {
+        const item = sampleMeta.find(s => s.id === p.id);
+        return !search || [p.caption, p.display_name, item?.tag, item?.category, item?.creator].join(" ").toLocaleLowerCase().includes(search.toLocaleLowerCase());
+      }) : [];
+  const memberPosts = userId ? feed.posts : [];
+  const typeMatches = (p: Post) => (filter !== "photo" && filter !== "video") || (p.media_type ?? "photo") === filter;
+  const savedEditorial = view === "saved" ? editorialSaves.ids.flatMap(id => samplePosts.filter(p => p.id === id)) : [];
+  const posts = [...memberPosts, ...savedEditorial, ...editorial].filter(typeMatches);
+  const detailIndex = route.open ? posts.findIndex(p => p.id === route.open) : -1;
+  const lookup = !!route.open && detailIndex < 0 && hasMore && !loading && !!userId &&
+    /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(route.open);
+  const directPost = useFeed({
+    client: supabase, userId, enabled: lookup, scope: view, mode: feedMode,
+    search, postId: route.open,
+  });
+  const detail = posts[detailIndex] ?? (lookup ? directPost.posts.find(p => p.id === route.open && typeMatches(p)) : null);
+  const detailMeta = detail?.sample ? sampleMeta.find(s => s.id === detail.id) : undefined;
+  const showFeed = view !== "stacks" && view !== "about" && view !== "hi";
+  useEffect(() => {
+    if (detailIndex >= 0 && !detail?.sample && detailIndex >= memberPosts.filter(typeMatches).length - 3 && hasMore && !loadMore && !feed.moreError)
+      void nextPage();
+  }, [detailIndex, detail?.sample, memberPosts.length, filter, hasMore, loadMore, feed.moreError, nextPage]);
+  function go(next: View) {
+    navigate({ view: next, search: "", filter: "all", open: "", postId: "" });
     window.scrollTo({ top: 0, behavior: "instant" });
-  };
+  }
+  function navClick(event: MouseEvent<HTMLAnchorElement>, next: View) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    go(next);
+    if (event.currentTarget.classList.contains("mobile-search-link"))
+      requestAnimationFrame(() => document.querySelector<HTMLInputElement>(".discover-field input")?.focus({ preventScroll: true }));
+  }
+  function openPost(post: Post) {
+    navigate({ ...route, open: post.id }, { replace: !!route.open, viewer: !route.open || history.state?.nepeelViewer === true });
+  }
+  function closePost() {
+    if (history.state?.nepeelViewer) history.back();
+    else navigate({ ...route, open: "" }, { replace: true });
+  }
+  function setFilter(next: MediaFilter) {
+    navigate({ ...route, filter: next, open: "" });
+  }
   const requireMember = (post?: Post) => {
     if (!session || post?.sample) {
       setModal("auth");
@@ -311,7 +323,7 @@ export default function App() {
   }
   const patchPost = (id: string, patch: Partial<Post>) => {
     setPosts((old) => old.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-    setDetail((old) => (old?.id === id ? { ...old, ...patch } : old));
+    if (lookup) directPost.setPosts(old => old.map(p => p.id === id ? { ...p, ...patch } : p));
   };
   async function react(post: Post, kind: "likes" | "bookmarks") {
     if (!requireMember(post) || !supabase || !userId) return;
@@ -330,14 +342,17 @@ export default function App() {
             }
           : { saved: enabled },
       );
-      if (view === "saved" && !enabled && kind === "bookmarks")
+      if (view === "saved" && !enabled && kind === "bookmarks") {
+        closePost();
         setPosts((old) => old.filter((p) => p.id !== post.id));
+      }
     });
   }
   async function follow(post: Post) {
     if (!requireMember(post) || !supabase || !userId) return;
     await run(`follow-${post.user_id}`, async () => {
       await setFollowing(supabase!, userId, post.user_id, !post.following);
+      if (lookup) directPost.setPosts(old => old.map(p => ({ ...p, following: !post.following })));
       setPosts((old) =>
         old.map((p) =>
           p.user_id === post.user_id ? { ...p, following: !post.following } : p,
@@ -363,18 +378,27 @@ export default function App() {
   }
   function searchSubmit(e: FormEvent) {
     e.preventDefault();
-    setSearch(searchDraft.trim());
-    location.hash = "discover";
-    setView("discover");
+    navigate({ view: "discover", filter: view === "discover" ? filter : "all", search: searchDraft.trim(), open: "", postId: "" });
+    window.scrollTo({ top: 0, behavior: "instant" });
   }
-  const reset = () => {
-    setSearch("");
-    setSearchDraft("");
-    setMode("all");
-    location.hash = "feed";
-    setRefresh((v) => v + 1);
-  };
-  const actions = (post: Post) => post.sample ? null : (
+  async function shareEditorial(post: Post) {
+    const url = new URL(browseHash({ view: "feed", filter: "all", search: "", open: post.id, postId: "" }), location.origin + "/").href;
+    if (navigator.share) {
+      try { await navigator.share({ url, title: post.caption }); return; }
+      catch (error) { if (error instanceof DOMException && error.name === "AbortError") return; }
+    }
+    try { await navigator.clipboard.writeText(url); setCopied(post.id); }
+    catch { setManualLink(url); }
+  }
+  const actions = (post: Post) => post.sample ? <div className="editorial-actions">
+    <button type="button" aria-pressed={editorialSaves.ids.includes(post.id)}
+      onClick={() => {
+        if (view === "saved" && editorialSaves.ids.includes(post.id)) closePost();
+        editorialSaves.toggle(post.id);
+      }}><Bookmark size={17} fill={editorialSaves.ids.includes(post.id) ? "currentColor" : "none"}/>
+      {editorialSaves.ids.includes(post.id) ? "저장됨" : "이 기기에 저장"}</button>
+    <button type="button" onClick={() => void shareEditorial(post)}><Send size={17}/>{copied === post.id ? "링크 복사됨" : "공유"}</button>
+  </div> : (
     <div className="post-actions">
       <button
         className={`icon-button ${post.liked ? "liked" : ""}`}
@@ -388,7 +412,7 @@ export default function App() {
       <button
         className="icon-button"
         aria-label="댓글 보기"
-        onClick={() => setDetail(post)}
+        onClick={() => document.getElementById("viewer-comment-input")?.focus()}
       >
         <MessageCircle />
       </button>
@@ -402,10 +426,13 @@ export default function App() {
       >
         {busy.includes(`share-${post.id}`) ? <LoaderCircle className="spin" /> : <Send />}
       </button>}
+      {post.user_id !== userId && <button className="text-button" disabled={busy.includes("follow-" + post.user_id)}
+        aria-pressed={post.following} onClick={() => void follow(post)}>{post.following ? "팔로잉" : "팔로우"}</button>}
+      <button className="icon-button" aria-label={post.user_id === userId ? "게시물 삭제" : "게시물 신고"}
+        onClick={() => post.user_id === userId ? setDeleting(post) : setReport(post)}>
+        {post.user_id === userId ? <Trash2 size={16}/> : <Flag size={16}/>}
+      </button>
       <span className="action-spacer" />
-      <span className="capture-label">
-        <ShieldCheck size={13} /> 앱 촬영
-      </span>
       <button
         className={`icon-button ${post.saved ? "saved" : ""}`}
         aria-label={post.saved ? "저장 취소" : "사진 저장"}
@@ -425,449 +452,100 @@ export default function App() {
       }}>
         본문으로 건너뛰기
       </a>
-      <div className="site-frame">
-      <aside className="sidebar">
-        <a
-          className="brand-link"
-          href="#feed"
-          onClick={() => go("feed")}
-          aria-label="nepeel 홈"
-        >
-          <Brand />
-        </a>
-        <nav aria-label="메인 메뉴">
-          {navigation.map((item) => (
-            <a
-              href={`#${item.id}`}
-              onClick={(e) => {
-                e.preventDefault();
-                go(item.id);
-              }}
-              key={item.id}
-              className={`nav-item ${view === item.id ? "active" : ""}`}
-              aria-current={view === item.id ? "page" : undefined}
-            >
-              <item.icon strokeWidth={view === item.id ? 2.5 : 1.7} />
-              <span>{item.label}</span>
-              {view === item.id && <span className="nav-dot" />}
-            </a>
-          ))}
-        </nav>
-        <button className="capture-button" onClick={() => setModal("camera")}>
-          <Camera size={21} />
-          <span>앱에서 촬영</span>
-          <ArrowUpRight size={17} />
-        </button>
-        <div className="sidebar-bottom">
-          {session ? (
-            <button className="account-button" onClick={() => go("profile")}>
-              <Avatar name={profile?.display_name ?? "나"} />
-              <span>
-                <b>{profile?.display_name ?? "내 계정"}</b>
-                <small>나의 기록</small>
-              </span>
-              <ChevronRight size={16} />
-            </button>
-          ) : (
-            <button className="account-button" onClick={() => setModal("auth")}>
-              <span className="avatar neutral">
-                <UserRound size={20} />
-              </span>
-              <span>
-                <b>로그인</b>
-                <small>또는 회원가입</small>
-              </span>
-              <ArrowUpRight size={16} />
-            </button>
-          )}
-          <div className="sidebar-foot">
-            <span>© 2026 nepeel</span>
-            <button onClick={() => go("about")}>서비스 소개</button>
-          </div>
-        </div>
-      </aside>
-      <div className="app-shell">
-        <header className={`utility-bar ${view === "discover" ? "show-search" : ""}`}>
-          <div className="mobile-brand">
-            <a href="#feed" onClick={() => go("feed")} aria-label="nepeel 홈">
-              <Brand />
-            </a>
-          </div>
-          <div className="utility-actions">
-            <form className="header-search" role="search" onSubmit={searchSubmit}>
-              <Search aria-hidden="true" size={18} />
-              <input type="search" aria-label="사진과 사람 검색" placeholder="사진과 사람 검색"
-                value={searchDraft} maxLength={80} onChange={e => setSearchDraft(e.target.value)} />
-              <button type="submit" aria-label="검색"><ArrowRight size={18} /></button>
+      <header className="browse-header">
+        <div className="browse-header-inner">
+          <a className="browse-brand" href="#feed" onClick={e => navClick(e,"feed")} aria-label="nepeel 홈"><Brand /></a>
+          <nav className="browse-nav" aria-label="메인 메뉴">
+            {navigation.filter(item => item.id !== "profile").map(item => (
+              <a key={item.id} href={"#" + item.id} onClick={e => navClick(e,item.id)} aria-current={view === item.id ? "page" : undefined}>{item.label}</a>
+            ))}
+          </nav>
+          <div className="browse-tools">
+            <form className="browse-search" role="search" onSubmit={searchSubmit}>
+              <button aria-label="검색" type="submit"><Search size={19} /></button>
+              <input type="search" aria-label="사진, 영상, 사람 검색" placeholder="사진, 영상, 사람 검색" maxLength={80}
+                value={searchDraft} onChange={e => setSearchDraft(e.target.value)} />
             </form>
-            <button
-              className="utility-action utility-account"
-              aria-label={session ? "내 프로필" : "로그인"}
-              aria-haspopup={session ? undefined : "dialog"}
-              onClick={() => (session ? go("profile") : setModal("auth"))}
-            >
-              {session ? (
-                <Avatar name={profile?.display_name ?? "나"} size="small" />
-              ) : (
-                <UserRound aria-hidden="true" />
-              )}
-              <span>{session ? "내 프로필" : "로그인"}</span>
+            <a className="mobile-search-link" href="#discover" onClick={e => navClick(e,"discover")} aria-label="검색 열기"><Search size={21} /></a>
+            <button className="browse-camera" onClick={() => setModal("camera")}><Camera size={18} /><span>앱에서 촬영</span></button>
+            <button className="browse-account" onClick={() => session ? go("profile") : setModal("auth")} aria-label={session ? "내 프로필" : "로그인"}>
+              {session ? <Avatar size="small" name={profile?.display_name ?? "나"}/> : <><UserRound size={19} /><span>로그인</span></>}
             </button>
           </div>
-        </header>
-        <div className={`page-layout ${view === "feed" && !postLink ? "" : "single-column"}`}>
-          <main id="main" tabIndex={-1}>
-            {view === "about" ? (
-              <About onCamera={() => setModal("camera")} />
-            ) : view === "hi" ? (
-              <Suspense
-                fallback={
-                  <p className="hi-empty" role="status">
-                    Hi를 준비하고 있어요…
-                  </p>
-                }
-              >
-                <Connections
-                  key={userId ?? "guest"}
-                  userId={userId}
-                  login={() => setModal("auth")}
-                />
-              </Suspense>
-            ) : (
-              <>
-                {view === "feed" && !postLink && <h1 className="home-title">홈 피드</h1>}
-                {view === "discover" && (
-                  <div className="page-heading"><h1>탐색</h1>{preview && <span className="preview-label">예시 사진</span>}</div>
-                )}
-                {view === "saved" && (
-                  <div className="page-heading"><h1>저장한 순간</h1><Bookmark className="heading-icon" /></div>
-                )}
-                {view === "profile" && (
-                  <section className="profile-panel">
-                    <Avatar name={profile?.display_name ?? "나"} size="large" />
-                    <div>
-                      
-                      <h1>
-                        {profile?.display_name ?? "내 프로필"}
-                      </h1>
-                      {profile?.bio && <p>{profile.bio}</p>}
-                      {session && <small>@{profile?.username}</small>}
-                    </div>
-                    {session && (
-                      <div className="profile-controls">
-                        <button
-                          className="outline-button"
-                          onClick={() => go("saved")}
-                        >
-                          <Bookmark size={16} /> 저장한 순간
-                        </button>
-                        <button
-                          className="outline-button"
-                          onClick={() => setModal("edit")}
-                        >
-                          프로필 수정
-                        </button>
-                        <button
-                          className="text-button"
-                          onClick={() =>
-                            void run("signout", async () => {
-                              const { error: e } =
-                                await supabase!.auth.signOut();
-                              if (e) throw e;
-                              go("feed");
-                            })
-                          }
-                        >
-                          <LogOut size={15} /> 로그아웃
-                        </button>
-                        <button
-                          className="text-button"
-                          onClick={() => setModal("deleteAccount")}
-                        >
-                          회원 탈퇴
-                        </button>
-                      </div>
-                    )}
-                  </section>
-                )}
-                {postLink && (
-                  <button className="back-link" onClick={reset}>
-                    <ArrowLeft size={16} /> 전체 피드로
-                  </button>
-                )}
-                <div className="feed-toolbar">
-                  <div className="feed-tabs">
-                    {view === "feed" && !postLink ? (
-                      <>
-                        <button
-                          aria-pressed={mode === "all"}
-                          className={mode === "all" ? "selected" : ""}
-                          onClick={() => setMode("all")}
-                        >
-                          전체
-                        </button>
-                        <button
-                          aria-pressed={mode === "following"}
-                          className={mode === "following" ? "selected" : ""}
-                          onClick={() => setMode("following")}
-                        >
-                          팔로잉
-                        </button>
-                      </>
-                    ) : (
-                      <h2>
-                        {view === "profile"
-                          ? "내가 남긴 순간"
-                          : postLink
-                            ? "공유된 순간"
-                            : search ? `“${search}” 검색 결과` : "모든 순간"}
-                      </h2>
-                    )}
-                    {view === "discover" && search && <button className="icon-button" aria-label="검색 지우기" onClick={() => { setSearch(""); setSearchDraft(""); }}><X size={18} /></button>}
-                  </div>
-                  <button
-                    className="sort-label"
-                    onClick={() => void reloadFeed()}
-                    aria-label="최신순 피드 새로고침"
-                    disabled={feed.refreshing || loading}
-                  >
-                    <RefreshCw size={16} className={feed.refreshing ? "spin" : ""} /> 새로고침
-                  </button>
-                </div>
-                {feed.refreshing && <p className="loading-state" role="status"><LoaderCircle className="spin" /> 최신 순간을 불러오는 중</p>}
-                {feed.refreshError && <div className="form-error" role="alert">
-                  새 사진을 불러오지 못했어요. 기존 사진은 그대로 볼 수 있어요.
-                  <button className="text-button" onClick={() => void reloadFeed()}>다시 시도</button>
-                </div>}
-                {loading || !authReady ? (
-                  <div className="loading-state" role="status">
-                    <LoaderCircle className="spin" /> 순간들을 불러오는 중
-                  </div>
-                ) : error ? (
-                  <div className="empty-state">
-                    <RefreshCw />
-                    <h3>잠시 연결이 끊겼어요.</h3>
-                    <p>{error}</p>
-                    <button
-                      className="dark-button"
-                      onClick={() => void reloadFeed()}
-                    >
-                      다시 시도
-                    </button>
-                  </div>
-                ) : !posts.length || (postLink && preview) ? (
-                  <div className="empty-state">
-                    {search ? <Search /> : postLink ? <Info /> : <Camera />}
-                    <h3>{search ? "검색 결과가 없어요" : postLink ? (preview ? "로그인하고 사진 보기" : "사진을 볼 수 없어요") : preview ? "로그인하고 이어보기" : mode === "following" ? "아직 팔로우한 사진이 없어요" : view === "saved" ? "아직 저장한 사진이 없어요" : "아직 사진이 없어요"}</h3>
-                    {postLink && !preview && <p>삭제되었거나 공개 범위가 바뀐 사진이에요.</p>}
-                    <button className="dark-button" onClick={() => {
-                      if (search) { setSearch(""); setSearchDraft(""); }
-                      else if (preview) setModal("auth");
-                      else if (postLink || mode === "following" || view === "saved") reset();
-                      else setModal("camera");
-                    }}>
-                      {search ? "검색 지우기" : preview ? "로그인" : postLink || mode === "following" || view === "saved" ? "모든 순간 보기" : "앱에서 촬영"}
-                      <ArrowRight size={16} />
-                    </button>
-                  </div>
-                ) : (
-                  <div
-                    className={
-                      view === "discover" ? "explore-grid" : "feed-list"
-                    }
-                  >
-                    {posts.map((post, i) =>
-                      view === "discover" ? (
-                        <button
-                          className="explore-item"
-                          key={post.id}
-                          onClick={() => setDetail(post)}
-                        >
-                          <img
-                            src={post.image_url}
-                            alt={post.caption || `${post.display_name}의 사진`}
-                            loading="lazy"
-                          />
-                          <span className="explore-info">
-                            <b>{post.sample ? sampleTitle(post) : post.display_name}</b>
-                          </span>
-                        </button>
-                      ) : (
-                        <article className="post" key={post.id}>
-                          <header className="post-header">
-                            {post.sample ? <span className="sample-avatar"><Aperture size={21} aria-hidden="true" /></span> : <Avatar name={post.display_name} index={i} />}
-                            <div className="post-person">
-                              <b>
-                                {post.sample ? sampleTitle(post) : post.display_name}
-                                {!post.sample && <span>
-                                  @
-                                  {post.username.length > 18
-                                    ? post.username.slice(0, 12) + "…"
-                                    : post.username}
-                                </span>}
-                              </b>
-                              <small>
-                                {timeLabel(post)}
-                              </small>
-                            </div>
-                            {!post.sample && post.user_id !== userId && (
-                              <button
-                                className={`follow-button ${post.following ? "is-following" : ""}`}
-                                onClick={() => void follow(post)}
-                                disabled={busy.includes(
-                                  `follow-${post.user_id}`,
-                                )}
-                              >
-                                {post.following ? (
-                                  <>
-                                    <Check size={13} /> 팔로잉
-                                  </>
-                                ) : (
-                                  "팔로우"
-                                )}
-                              </button>
-                            )}
-                            {!post.sample && (
-                              <button
-                                className="icon-button compact"
-                                aria-label={
-                                  post.user_id === userId
-                                    ? "게시물 삭제"
-                                    : "게시물 신고"
-                                }
-                                onClick={() =>
-                                  post.user_id === userId
-                                    ? setDeleting(post)
-                                    : setReport(post)
-                                }
-                              >
-                                {post.user_id === userId ? (
-                                  <Trash2 size={17} />
-                                ) : (
-                                  <Flag size={17} />
-                                )}
-                              </button>
-                            )}
-                          </header>
-                          <button
-                            className={`post-photo ${post.sample ? post.id : ""}`}
-                            onClick={() => setDetail(post)}
-                            aria-label={`${post.sample ? sampleTitle(post) : post.display_name} 사진 크게 보기`}
-                          >
-                            <img
-                              src={post.image_url}
-                              alt={
-                                post.caption || `${post.display_name}의 사진`
-                              }
-                              loading={i === 0 ? "eager" : "lazy"}
-                            />
-                          </button>
-                          {actions(post)}
-                          <div className="post-copy">
-                            {!post.sample && Number(post.like_count) > 0 && (
-                              <strong className="like-count">
-                                좋아요{" "}
-                                {Number(post.like_count).toLocaleString()}개
-                              </strong>
-                            )}
-                            <p>
-                              {!post.sample && <b>{post.display_name} </b>}{post.caption}
-                            </p>
-                            <PhotoPlace post={post} userId={userId} onChange={patch=>patchPost(post.id,patch)}/>
-                            {!post.sample && <button
-                              className="comment-link"
-                              onClick={() => setDetail(post)}
-                            >
-                              {post.comment_count
-                                ? `댓글 ${post.comment_count}개 보기`
-                                : "댓글 쓰기"}
-                              <ArrowUpRight size={13} />
-                            </button>}
-                          </div>
-                        </article>
-                      ),
-                    )}
-                  </div>
-                )}
-                {feed.moreError && (
-                  <p className="form-error" role="alert">
-                    다음 사진을 불러오지 못했어요. 다시 눌러 시도해 주세요.
-                  </p>
-                )}
-                {hasMore && (
-                  <button
-                    className="load-more outline-button"
-                    onClick={() => void nextPage()}
-                    disabled={loadMore}
-                    aria-busy={loadMore}
-                  >
-                    {loadMore ? (
-                      <LoaderCircle className="spin" size={16} />
-                    ) : (
-                      <ArrowDown size={16} />
-                    )}{" "}
-                    더 많은 순간 보기
-                  </button>
-                )}
-              </>
-            )}
-          </main>
-          {view === "feed" && !postLink && <aside className="right-rail">
-            <section className="rail-discover">
-              <div className="section-line"><h2>다른 순간들</h2><button onClick={() => go("discover")}>전체 보기 <ArrowRight size={14} /></button></div>
-              {(preview ? samplePosts : posts).slice(1, 4).map(post => (
-                <button className="rail-moment" key={post.id} onClick={() => setDetail(post)}>
-                  <img src={post.image_url} alt="" loading="lazy" />
-                  <span><b>{post.sample ? sampleMeta.find(item => item.id === post.id)?.tag : post.display_name}</b><small>{post.sample ? "미리보기" : post.caption || "앱 촬영"}</small></span>
-                  <ArrowUpRight size={16} />
-                </button>
-              ))}
-              {!preview && posts.length < 2 && <button className="text-button" onClick={() => go("discover")}>사진 둘러보기 <ArrowRight size={16} /></button>}
-            </section>
-            <div className="rail-footer">
-              <button onClick={() => go("about")}>서비스 소개 · 커뮤니티 원칙</button>
-              {preview && <a href="https://unsplash.com" target="_blank" rel="noreferrer">예시 사진 · Unsplash</a>}
-              <p>© 2026 nepeel</p>
-            </div>
-          </aside>}
         </div>
-      </div>
-      </div>
-      <nav className="mobile-nav" aria-label="모바일 메뉴">
-        {navigation.slice(0, 2).map((item) => (
-          <button
-            key={item.id}
-            aria-label={item.label}
-            aria-current={view === item.id ? "page" : undefined}
-            onClick={() => go(item.id)}
-          >
-            <item.icon />
-            <span>{item.label}</span>
-          </button>
-        ))}
-        <button
-          className="mobile-capture"
-          aria-label="앱에서 촬영"
-          onClick={() => setModal("camera")}
-        >
-          <Camera aria-hidden="true" /><span>촬영</span>
-        </button>
-        {navigation
-          .slice(2)
-          .filter((item) => item.id !== "saved")
-          .map((item) => (
-            <button
-              key={item.id}
-              aria-label={item.label}
-              aria-current={view === item.id ? "page" : undefined}
-              onClick={() => go(item.id)}
-            >
-              <item.icon />
-              <span>{item.label}</span>
-            </button>
-          ))}
+      </header>
+      <main id="main" tabIndex={-1} className={"browse-main view-" + view}>
+        {view !== "profile" && view !== "about" && view !== "hi" && <h1 className="visually-hidden">{labels[view]}</h1>}
+        {view === "about" && <About onCamera={() => setModal("camera")} />}
+        {view === "hi" && <Suspense fallback={<p className="loading-state" role="status">연결 불러오는 중…</p>}>
+          <Connections key={userId ?? "guest"} userId={userId} login={() => setModal("auth")} />
+        </Suspense>}
+        {(view === "profile" || view === "saved") && <>
+          {view === "profile" && <section className="browse-profile">
+            <Avatar name={profile?.display_name ?? "나"} />
+            <div><h1>{profile?.display_name ?? "내 프로필"}</h1>
+              {profile && <small>@{profile.username}</small>}{profile?.bio && <p>{profile.bio}</p>}</div>
+            {session && <details className="account-menu"><summary aria-label="계정 설정"><Settings size={20}/></summary>
+              <div><button onClick={() => setModal("edit")}>프로필 수정</button>
+              <button onClick={() => void run("signout", async () => {
+                const { error } = await supabase!.auth.signOut();
+                if (error) throw error; go("feed");
+              })}>로그아웃</button>
+              <button onClick={() => setModal("deleteAccount")}>회원 탈퇴</button></div>
+            </details>}
+          </section>}
+          <nav className="library-tabs" aria-label="내 보관함">
+            <a href="#profile" aria-current={view === "profile" ? "page" : undefined}>내 게시물</a>
+            <a href="#stacks">묶음</a><a href="#saved" aria-current={view === "saved" ? "page" : undefined}>저장</a>
+          </nav>
+        </>}
+        {view === "stacks" && (authReady ? <Suspense fallback={<p className="loading-state" role="status">묶음 불러오는 중…</p>}>
+          <MediaStacks key={userId ?? "guest"} userId={userId} login={() => setModal("auth")} />
+        </Suspense> : <p role="status" className="loading-state">묶음 불러오는 중…</p>)}
+        {showFeed && <>
+          {postLink && <button className="back-link" onClick={() => go("feed")}><ArrowLeft size={16}/> 피드로</button>}
+          {view === "discover" && <form className="discover-field" role="search" onSubmit={searchSubmit}>
+            <Search size={20} aria-hidden="true"/><input type="search" aria-label="탐색 검색어" placeholder="사진, 영상, 사람 검색"
+              value={searchDraft} onChange={e=>setSearchDraft(e.target.value)} maxLength={80}/>
+            <button type="submit">검색</button>
+          </form>}
+          {!postLink && <div className="browse-filters">
+            <div className="filter-strip" aria-label="콘텐츠 필터">
+              {([["all", "전체"], ["photo","사진"], ["video","동영상"], ...(view === "feed" ? [["following","팔로잉"]] : [])] as const).map(([key,label]) =>
+                <button type="button" key={key} aria-pressed={filter === key} onClick={() => setFilter(key as MediaFilter)}>{label}</button>)}
+            </div>
+            <div className="density-group" aria-label="그리드 간격">
+              <button type="button" aria-label="기본 그리드" title="기본 그리드" aria-pressed={!dense} onClick={() => changeDensity(false)}><Grid2X2 size={18}/></button>
+              <button type="button" aria-label="촘촘한 그리드" title="촘촘한 그리드" aria-pressed={dense} onClick={() => changeDensity(true)}><Grid3X3 size={18}/></button>
+            </div>
+          </div>}
+          {search && <div className="search-summary"><span>‘{search}’ 검색 결과</span><button aria-label="검색 지우기" onClick={() => go("discover")}><X size={16}/></button></div>}
+          {feed.refreshError && <p className="form-error" role="alert">업데이트할 수 없습니다. <button onClick={() => void reloadFeed()}>다시 시도</button></p>}
+          {loading || !authReady ? <p className="loading-state" role="status"><LoaderCircle className="spin"/> 불러오는 중…</p>
+          : error ? <div className="browse-empty" role="alert"><p>{error}</p><button className="outline-button" onClick={() => void reloadFeed()}>다시 시도</button></div>
+          : posts.length && !(postLink && preview) ? <MediaGrid posts={posts} dense={dense} onOpen={openPost}/>
+          : <div className="browse-empty">
+            <p>{search ? "검색 결과가 없어요." : postLink ? (preview ? "이 게시물은 회원에게만 공개돼요." : "게시물을 볼 수 없어요.") :
+              preview && (view === "profile" || filter === "following") ? "로그인하면 " + (filter === "following" ? "팔로잉 피드" : "내 게시물") + "을 볼 수 있어요." :
+              filter === "following" ? "팔로우한 사람의 게시물이 아직 없어요." : filter === "video" ? "표시할 동영상이 없어요." :
+              view === "saved" ? "저장한 게시물이 없어요." : "표시할 게시물이 없어요."}</p>
+            {preview && !search && (postLink || view === "profile" || filter === "following") ?
+            <button className="dark-button" onClick={() => setModal("auth")}>로그인</button> :
+            <button className="outline-button" onClick={() => go(search ? "discover" : "feed")}>{search ? "검색 지우기" : "전체 둘러보기"}</button>}
+          </div>}
+          {route.open && !detail && !loading && authReady && !(lookup && directPost.loading) && <div className="browse-empty" role="status">
+            <p>이 게시물을 열 수 없어요.</p><button className="outline-button" onClick={closePost}>목록으로</button>
+          </div>}
+          {feed.moreError && <p className="form-error" role="alert">다음 게시물을 불러오지 못했어요.</p>}
+          {hasMore && <button className="load-more outline-button" onClick={() => void nextPage()} disabled={loadMore}>
+            {loadMore ? <LoaderCircle className="spin" size={16}/> : <ArrowDown size={16}/>} 더 보기</button>}
+        </>}
+      </main>
+      <footer className="browse-footer"><a href="#about">서비스 소개</a><a href="/photo-credits.txt">미디어 출처</a></footer>
+      <nav className="browse-bottom" aria-label="모바일 메뉴">
+        {navigation.map(item => <a key={item.id} href={"#" + item.id} onClick={e => navClick(e,item.id)} aria-current={view === item.id || (item.id === "profile" && view === "saved") ? "page" : undefined}>
+          <item.icon aria-hidden="true" size={21} /><span>{item.label}</span></a>)}
       </nav>
-      <footer className="mobile-footer"><button onClick={() => go("about")}>서비스 소개</button></footer>
       {notice && (
         <div className="toast" role="status">
           <Check size={18} />
@@ -882,10 +560,11 @@ export default function App() {
           close={() => setModal(null)}
           onDone={() => {
             setModal(null);
-            notify("반가워요. 당신의 순간을 기다렸어요.");
+            notify("로그인했어요.");
           }}
         />
       )}
+      {manualLink && <Dialog title="공유 링크" close={() => setManualLink("")}><label className="manual-link">링크 복사<input type="url" value={manualLink} readOnly onFocus={e => e.target.select()} autoFocus /></label></Dialog>}
       {modal === "camera" && <CameraDialog close={() => setModal(null)} />}
       {sharedLink && sharedLink.userId === userId && <PostShareDialog key={sharedLink.url}
         link={sharedLink} close={() => setSharedLink(null)}
@@ -906,32 +585,14 @@ export default function App() {
         />
       )}
       {modal === "recovery" && <Recovery close={() => setModal(null)} />}
-      {detail?.sample && (
-        <Dialog title="예시 사진" close={() => setDetail(null)} wide>
-          <figure className="sample-detail">
-            <img src={detail.image_url} alt={detail.caption} />
-            <figcaption>{detail.caption}</figcaption>
-          </figure>
-        </Dialog>
-      )}
-      {detail && !detail.sample && (
-        <PostDialog
-          post={detail}
-          actions={actions(detail)}
-          userId={userId}
-          close={() => setDetail(null)}
-          onDetails={patch=>patchPost(detail.id,patch)}
-          login={() => {
-            setDetail(null);
-            setModal("auth");
-          }}
-          onComment={() =>
-            patchPost(detail.id, {
-              comment_count: Number(detail.comment_count) + 1,
-            })
-          }
-        />
-      )}
+      {detail && <PostDialog post={detail} actions={actions(detail)} userId={userId} close={closePost}
+        editorialTitle={detailMeta?.title} position={detailIndex >= 0 ? detailIndex + 1 : undefined} total={detailIndex >= 0 ? posts.length : undefined}
+        onPrevious={detailIndex > 0 ? () => openPost(posts[detailIndex - 1]) : undefined}
+        onNext={detailIndex >= 0 && detailIndex + 1 < posts.length ? () => openPost(posts[detailIndex + 1]) : undefined}
+        credit={detailMeta ? { label: detailMeta.creator ?? "사진 출처", url: detailMeta.sourceUrl } : undefined}
+        onDetails={patch => patchPost(detail.id, patch)}
+        login={() => setModal("auth")}
+        onComment={() => patchPost(detail.id, { comment_count: Number(detail.comment_count) + 1 })} />}
       {modal === "deleteAccount" && session && (
         <DeleteAccount
           key={userId}
@@ -956,7 +617,7 @@ export default function App() {
         />
       )}
       {deleting && (
-        <Dialog title="이 순간을 삭제할까요?" close={() => setDeleting(null)}>
+        <Dialog title="게시물을 삭제할까요?" close={() => setDeleting(null)}>
           <p className="muted">
             사진과 좋아요, 댓글이 삭제됩니다. 이 작업은 되돌릴 수 없어요.
           </p>
@@ -966,6 +627,7 @@ export default function App() {
             onClick={() =>
               void run("delete", async () => {
                 await accountAction(supabase!, "", { action: "delete", postId: deleting.id }, userId!);
+                closePost();
                 setPosts((old) => old.filter((p) => p.id !== deleting.id));
                 setDeleting(null);
                 notify("사진을 삭제했어요.");
