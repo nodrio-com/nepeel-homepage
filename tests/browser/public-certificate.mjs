@@ -6,10 +6,12 @@ import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import sharp from "sharp";
 import { createServer, preview } from "vite";
+import { serveStackShare } from "../../server/stack-share.ts";
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE
   ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : "playwright");
 const token = "v".repeat(43);
+const handle = "00000000-0000-4000-8000-000000000001";
 const digest = buffer => createHash("sha256").update(buffer).digest("hex");
 let server, browser, origin, photo;
 before(async () => {
@@ -30,7 +32,7 @@ after(async () => {
   await server?.close();
 });
 
-async function viewer(width) {
+async function viewer(width, scoped = false) {
   const page = await browser.newPage({ viewport: { width, height: 870 }, locale: "ko-KR" });
   page.setDefaultTimeout(20_000);
   const state = { status: 200, media: photo, mime: "image/jpeg", chain: "minted", expected: digest(photo), delay: 0 };
@@ -41,9 +43,19 @@ async function viewer(width) {
   await page.route("**/*", async route => {
     const { pathname, origin: target, searchParams } = new URL(route.request().url());
     if (target !== origin) { externals.push(target); return route.abort(); }
-    if (pathname !== "/api/certificate") return route.continue();
+    if (scoped && pathname === "/stack/" + token) {
+      const response = await serveStackShare(new Request(route.request().url()), {
+        async resolve() { return { title: "사진 기록", items: [{ id: handle, source: "certificate", mediaKind: "photo", caption: "" }] }; },
+      });
+      return route.fulfill({ status:response.status, headers:Object.fromEntries(response.headers), body:await response.text() });
+    }
+    const mediaPath = "/stack/" + token + "/media/" + handle;
+    if (scoped && pathname === "/api/certificate") throw new Error("Independent certificate link requested");
+    if (pathname !== (scoped ? mediaPath : "/api/certificate")) return route.continue();
+    if (scoped && !searchParams.has("certificate")) return route.fulfill({ contentType:"image/jpeg",body:photo });
     methods.push(route.request().method());
-    assert.equal(searchParams.get("token"), token);
+    if (scoped) assert.equal(searchParams.toString(),"certificate=1");
+    else assert.equal(searchParams.get("token"), token);
     if (state.delay) await new Promise(resolve => setTimeout(resolve, state.delay));
     await route.fulfill({
       status: state.status,
@@ -55,12 +67,36 @@ async function viewer(width) {
       body: state.status === 200 && route.request().method() === "GET" ? state.media : "",
     });
   });
-  return { page, state, errors, externals, methods, open: () => page.goto(`${origin}/verify/${token}`, { waitUntil: "commit" }) };
+  return { page, state, errors, externals, methods, open: () => page.goto(origin + (scoped ? "/stack/" : "/verify/") + token, { waitUntil: "commit" }) };
 }
 async function capture(page, name) {
   if (process.env.CERTIFICATE_SCREENSHOTS)
     await page.screenshot({ path: resolve(process.env.CERTIFICATE_SCREENSHOTS, name + ".png"), fullPage: true });
 }
+
+test("a stack recipient opens its verified photo, inspects the receipt and loses access after scoped revocation", async () => {
+  const { page, state, methods, externals, errors, open } = await viewer(390,true);
+  try {
+    await page.clock.install();
+    await open();
+    const link = page.getByRole("link",{name:"1번째 사진 촬영 인증서 보기"});
+    await link.focus();
+    await link.press("Enter");
+    await page.getByRole("heading",{name:"공유 파일 일치 · XRPL 테스트넷"}).waitFor();
+    assert.equal(new URL(page.url()).pathname,`/verify/stack/${token}/${handle}`);
+    await page.locator(".certificate-details summary").click();
+    await page.getByText(state.expected,{exact:true}).waitFor();
+    await page.getByRole("link",{name:/XRPL 테스트넷에서 보기/}).waitFor();
+    await capture(page,"390-stack-certificate");
+    state.status=404;
+    await page.clock.fastForward(61_000);
+    await page.getByText(/공유가 종료되었거나/).waitFor();
+    assert.equal(await page.locator(".certificate-media,.certificate-details").count(),0);
+    assert.ok(methods.includes("GET") && methods.includes("HEAD"));
+    assert.deepEqual(externals,[]);
+    assert.deepEqual(errors,[]);
+  } finally { await page.close(); }
+});
 
 test("anonymous token renders the same hashed photo, compares matching and changed files locally", async () => {
   const { page, errors, externals, open } = await viewer(320);
