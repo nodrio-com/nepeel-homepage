@@ -27,24 +27,41 @@ function files(pack: LanguagePack) {
   return [pack.model, pack.shortlist, ...pack.vocabs];
 }
 
-async function modelCache() {
-  try { return await globalThis.caches?.open("nepeel-offline-translation-v1"); }
-  catch { return undefined; }
+let database: Promise<IDBDatabase> | undefined;
+function openModelStore() {
+  database ??= new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open("nepeel-offline-translation", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("files");
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => { db.close(); database = undefined; };
+      resolve(db);
+    };
+    request.onerror = () => reject(request.error);
+  }).catch(error => { database = undefined; throw error; });
+  return database;
+}
+
+async function modelFile<T>(mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest<T>) {
+  const db = await openModelStore();
+  return new Promise<T>((resolve, reject) => {
+    const transaction = db.transaction("files", mode);
+    const request = operation(transaction.objectStore("files"));
+    transaction.oncomplete = () => resolve(request.result);
+    transaction.onabort = () => reject(transaction.error);
+  });
 }
 
 export async function packInstalled(pack: LanguagePack) {
-  const cache = await modelCache();
-  if (!cache) return false;
-  const keys = new Set((await cache.keys()).map(request => request.url));
-  return files(pack).every(([attachment]) => keys.has(cdn + attachment));
+  const keys = new Set(await modelFile("readonly", store => store.getAllKeys()).catch(() => []));
+  return files(pack).every(([, hash]) => keys.has(hash));
 }
 
 export async function loadPack(pack: LanguagePack, allowDownload: boolean) {
-  const cache = await modelCache();
   const buffers = await Promise.all(files(pack).map(async ([attachment, hash]) => {
     const url = cdn + attachment;
-    const cached = await cache?.match(url);
-    if (cached) return cached.arrayBuffer();
+    const cached = await modelFile("readonly", store => store.get(hash)).catch(() => undefined);
+    if (cached instanceof ArrayBuffer) return cached;
     if (!allowDownload) throw new Error("Translation pack needs a download");
     const integrity = btoa(String.fromCharCode(...hash.match(/../g)!.map(byte => parseInt(byte, 16))));
     const response = await fetch(url, {
@@ -54,7 +71,7 @@ export async function loadPack(pack: LanguagePack, allowDownload: boolean) {
     if (!response.ok) throw new Error("Translation pack download failed");
     const buffer = await response.arrayBuffer();
     // Private windows or low-storage devices can still translate in this session.
-    try { await cache?.put(url, new Response(buffer)); } catch { /* Cache quota or storage policy. */ }
+    try { await modelFile("readwrite", store => store.put(buffer, hash)); } catch { /* Quota or storage policy. */ }
     return buffer;
   }));
   const [model, shortlist, ...vocabs] = buffers;
