@@ -45,6 +45,27 @@ test("anonymous viewer emits ordered escaped content, a gated Peel comparison, a
   assert.match(await empty.text(), /공개된 항목이 없어요/);
 });
 
+test("tape enhances only post photos while legacy, certificate and video media stay intact", async () => {
+  const items: PublicStackItem[] = [
+    { ...member, tape: "bottom" }, { ...picture, source: "certificate", tape: "top" },
+    { ...video, source: "post", tape: "center" }, { ...picture, id: randomUUID() },
+  ];
+  const page = await serveStackShare(new Request(base), {
+    ...source, async resolve() { return { title: "공유", items }; },
+  });
+  const html = await page.text();
+  assert.deepEqual(html.match(/data-share-tape="[^"]*"/g), ['data-share-tape="bottom"']);
+  assert.equal(html.match(/data-share-caption/g)?.length, 1);
+  assert.match(html, /<figcaption data-share-caption>&lt;img/);
+  assert.match(html, /<script type="module" src="\/share-enhancements\.js" referrerpolicy="no-referrer"><\/script>/);
+  assert.equal(page.headers.get("referrer-policy"), "no-referrer");
+  const legacy = await serveStackShare(new Request(base), {
+    ...source, async resolve() { return { title: "공유", items: [picture] }; },
+  });
+  assert.doesNotMatch(await legacy.text(), /data-share-tape|data-share-caption|share-enhancements\.js/);
+  assert.doesNotMatch(legacy.headers.get("content-security-policy")!, /script-src|worker-src|connect-src/);
+});
+
 test("certificate views reject ordinary items and proof headers cannot cross over from ordinary media or error responses", async () => {
   const headers = { "Content-Type":"image/jpeg", "X-Certificate-State":"minted", "X-Certificate-Origin":"ios",
     "X-Display-SHA256":"a".repeat(64), "X-Certificate-Tx":"B".repeat(64), "X-Certificate-Token":"C".repeat(64) };

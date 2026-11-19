@@ -26,6 +26,8 @@ import { useConnections } from "../../shared/useConnections";
 import type { HiMessageDrafts } from "../lib/hi-message-drafts";
 import { Avatar, Dialog } from "../App";
 import "./connections.css";
+import { readerLanguage, saveLanguage, watchLanguage } from "../lib/on-device-translation";
+import { TranslatedText } from "./TranslatedText";
 
 export default function Connections({
   userId,
@@ -38,9 +40,8 @@ export default function Connections({
   messageDrafts: HiMessageDrafts;
   client?: SupabaseClient | null;
 }) {
-  const [en, setEn] = useState(
-    () => localStorage.getItem("nepeel.hi.language") === "en",
-  );
+  const language = useSyncExternalStore(watchLanguage, readerLanguage, () => "ko");
+  const en = language !== "ko";
   const t = (ko: string, english: string) => (en ? english : ko);
   const [active, setActive] = useState(!document.hidden);
   useEffect(() => {
@@ -141,8 +142,8 @@ export default function Connections({
           className="hi-language"
           aria-label={t("Switch to English", "한국어로 전환")}
           onClick={() => {
-            setEn(!en);
-            localStorage.setItem("nepeel.hi.language", en ? "ko" : "en");
+            const next = en ? "ko" : "en";
+            saveLanguage(next);
           }}
         >
           <Globe2 size={16} aria-hidden="true" />
@@ -341,7 +342,7 @@ export default function Connections({
                           key={m.id}
                           className={`hi-bubble ${m.sender_id === userId ? "mine" : ""}`}
                         >
-                          <p>{m.body}</p>
+                          <p><TranslatedText text={m.body} targetLanguage={language}/></p>
                           <time dateTime={m.created_at}>
                             {new Date(m.created_at).toLocaleTimeString(
                               en ? "en" : "ko",

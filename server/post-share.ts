@@ -1,30 +1,20 @@
-type SharedPost = { image_path: string; caption: string; mime_type: string | null };
+import type { TapePosition } from "../shared/capture-context.js";
+import { privateShareHeaders as privateHeaders, shareCaption, shareModule, sharePolicy, tapeAttribute, type ShareFeatures } from "./share-page.js";
+
+export type SharedPost = { image_path: string; caption: string; mime_type: string | null; tape?: TapePosition | null };
 
 export interface PostShareSource {
   resolve(token: string): Promise<SharedPost | null>;
   media(path: string, request: Request): Promise<Response>;
 }
 
-const privateHeaders = {
-  "Cache-Control": "private, no-store",
-  "Netlify-CDN-Cache-Control": "no-store",
-  "Referrer-Policy": "no-referrer",
-  "X-Content-Type-Options": "nosniff",
-  "X-Robots-Tag": "noindex, nofollow, noarchive, noimageindex",
-  "Content-Security-Policy": "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
-};
-
-function escapeText(value: string) {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
-
-function page(request: Request, status: number, title: string, content: string) {
+function page(request: Request, status: number, title: string, content: string, features: ShareFeatures = {}) {
   const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} · nepeel</title>
-<link rel="stylesheet" href="/post-share.css"><link rel="icon" href="/favicon.svg"></head>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>${title} · nepeel</title>
+<link rel="stylesheet" href="/post-share.css"><link rel="icon" href="/favicon.svg">${shareModule(features)}</head>
 <body><main><header><span class="brand">nepeel</span></header>${content}</main></body></html>`;
   return new Response(request.method === "HEAD" ? null : html, {
-    status, headers: { ...privateHeaders, "Content-Type": "text/html; charset=utf-8" },
+    status, headers: { ...privateHeaders, "Content-Security-Policy": sharePolicy(features), "Content-Type": "text/html; charset=utf-8" },
   });
 }
 
@@ -80,12 +70,14 @@ export async function servePostShare(request: Request, source: PostShareSource) 
     const src = `/s/${match[1]}/media`;
     const isVideo = type.startsWith("video/");
     const title = isVideo ? "공유된 영상" : "공유된 사진";
+    const tape = isVideo ? "" : tapeAttribute(post.tape);
     const media = isVideo
       ? `<video src="${src}" aria-label="${title}" controls playsinline muted autoplay preload="metadata"></video>`
-      : `<img class="photo" src="${src}" alt="${title}" fetchpriority="high">`;
-    const caption = post.caption ? `<figcaption>${escapeText(post.caption)}</figcaption>` : "";
+      : `<img class="photo" src="${src}" alt="${title}" fetchpriority="high"${tape}>`;
+    const caption = shareCaption(post.caption);
     return page(request, 200, title,
-      `<h1 class="sr-only">${title}</h1><p class="status">촬영 인증 미확인</p><figure>${media}${caption}</figure>`);
+      `<h1 class="sr-only">${title}</h1><p class="status">촬영 인증 미확인</p><figure>${media}${caption}</figure>`,
+      { tape: !!tape, captions: !!caption });
   } catch {
     return page(request, 503, "게시물을 불러오지 못했어요",
       "<h1>게시물을 불러오지 못했어요</h1><p>잠시 후 페이지를 새로고침해 주세요.</p>");

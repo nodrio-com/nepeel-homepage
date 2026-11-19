@@ -1,0 +1,5 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": { "modules": ["NepeelTranslationModule"] },
+  "android": { "modules": ["com.nepeel.translation.NepeelTranslationModule"] }
+}

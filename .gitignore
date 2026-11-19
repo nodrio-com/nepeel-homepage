@@ -11,6 +11,8 @@ dist/
 .expo/
 mobile/android/
 mobile/ios/
+mobile/modules/*/android/build/
+mobile/modules/*/android/.gradle/
 server/android-attestation/.gradle/
 server/android-attestation/.kotlin/
 server/android-attestation/build/

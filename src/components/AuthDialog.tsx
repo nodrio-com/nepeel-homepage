@@ -5,17 +5,12 @@ import { Dialog } from "../App";
 import { supabase } from "../lib/supabase";
 import { authError, authNotice } from "../../shared/auth";
 import { useAuthForm } from "../../shared/useAuthForm";
+import { readerLanguage, saveLanguage } from "../lib/on-device-translation";
 
 export function AuthDialog({ close, onDone, client = supabase }: {
   close: () => void; onDone: () => void; client?: SupabaseClient | null;
 }) {
-  const [en, setEn] = useState(() => {
-    try {
-      const saved = localStorage.getItem("nepeel.hi.language");
-      if (saved === "en" || saved === "ko") return saved === "en";
-    } catch { /* Use the browser language when preferences are unavailable. */ }
-    return !navigator.language.startsWith("ko");
-  });
+  const [en, setEn] = useState(() => readerLanguage() !== "ko");
   const t = (ko: string, english: string) => en ? english : ko;
   const h = useAuthForm(client, location.origin, onDone);
   const emailOnly = h.mode === "reset" || h.mode === "resend";
@@ -30,7 +25,7 @@ export function AuthDialog({ close, onDone, client = supabase }: {
     <div lang={en ? "en" : "ko"}>
       <button className="text-button auth-reset" disabled={h.pending} onClick={() => {
         setEn(!en);
-        try { localStorage.setItem("nepeel.hi.language", en ? "ko" : "en"); } catch { /* This dialog retains the selection. */ }
+        saveLanguage(en ? "ko" : "en");
       }}>{en ? "한국어" : "English"}</button>
       {!emailOnly && <div className="auth-tabs">
         <button type="button" disabled={h.pending} aria-pressed={h.mode === "login"} className={h.mode === "login" ? "selected" : ""} onClick={() => h.change("login")}>{t("로그인", "Sign in")}</button>

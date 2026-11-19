@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { TapePosition } from "./capture-context";
 
 export interface StackRef {
   source: "post" | "certificate";
@@ -6,6 +7,7 @@ export interface StackRef {
 }
 
 export interface StackSource extends StackRef {
+  tape?: TapePosition | null;
   mediaKind: "photo" | "video";
   caption: string;
   createdAt: string;

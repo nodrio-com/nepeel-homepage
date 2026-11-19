@@ -1,6 +1,6 @@
 import { after, before, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { createClient } from "@supabase/supabase-js";
 import { getFeedPage } from "../shared/data";
@@ -19,23 +19,9 @@ before(async () => {
     create schema storage; create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
     create table storage.objects(id uuid default gen_random_uuid(),bucket_id text,name text,metadata jsonb,unique(bucket_id,name));
     alter table storage.objects enable row level security; grant usage on schema storage to anon,authenticated,service_role; grant all on storage.objects to anon,authenticated,service_role;`);
-  for (const file of [
-    "202610140001_nepeel.sql",
-    "202610140002_capture_hardening.sql",
-    "202610140003_hi_connections.sql",
-    "202610140004_account_cleanup.sql",
-    "202610140005_connection_unblock.sql",
-    "202610140006_capture_publications.sql",
-    "202610140007_photo_places.sql",
-    "202610140008_feed_pages.sql",
-    "202611190003_media_feed_pages.sql",
-  ])
-    await db.exec(
-      await readFile(
-        new URL(`../supabase/migrations/${file}`, import.meta.url),
-        "utf8",
-      ),
-    );
+  const directory = new URL("../supabase/migrations/", import.meta.url);
+  for (const file of (await readdir(directory)).filter(file => file.endsWith(".sql")).sort())
+    await db.exec(await readFile(new URL(file, directory), "utf8"));
   await db.exec(
     `insert into auth.users values('${member}','{"display_name":"Member"}'),('${friend}','{"display_name":"Friend"}')`,
   );
@@ -134,12 +120,15 @@ function transport(viewer = member) {
 }
 test("feed pages preserve equal/microsecond timestamp ordering and hydrate only visible photos", async () => {
   await seed(61);
+  await db.query("update public.posts set tape='bottom' where id=$1", [photoId(45)]);
   const { client, requests, signedCounts } = transport();
   let cursor: FeedCursor | null = null;
   const found: string[] = [];
   do {
     const page = await getFeedPage(client, "all", "", cursor);
     found.push(...page.posts.map((p) => p.id));
+    for (const post of page.posts)
+      assert.equal(post.tape, post.id === photoId(45) ? "bottom" : null);
     assert.ok(
       page.posts.every(
         (p) =>

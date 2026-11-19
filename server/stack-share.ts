@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import type { TapePosition } from "../shared/capture-context.js";
+import { escapeHtml, privateShareHeaders as stackHeaders, shareCaption, shareModule, sharePolicy, tapeAttribute, type ShareFeatures } from "./share-page.js";
+
+export { stackHeaders };
 
 export interface PublicStackItem {
   id: string;
@@ -10,6 +14,7 @@ export interface PublicStackItem {
   stackScoped?: boolean;
   imagePath?: string;
   mimeType?: string | null;
+  tape?: TapePosition | null;
 }
 
 export interface PublicStack {
@@ -44,27 +49,14 @@ frame.addEventListener('pointermove', event => {
   if (frame.hasPointerCapture(event.pointerId)) drag(event);
 });`;
 const scriptDigest = createHash("sha256").update(peelScript).digest("base64");
-export const stackHeaders = {
-  "Cache-Control": "private, no-store",
-  "Netlify-CDN-Cache-Control": "no-store",
-  "Referrer-Policy": "no-referrer",
-  "X-Content-Type-Options": "nosniff",
-  "X-Robots-Tag": "noindex, nofollow, noarchive, noimageindex",
-  "Content-Security-Policy": `default-src 'none'; img-src 'self'; media-src 'self'; style-src 'self'; script-src 'sha256-${scriptDigest}'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
-};
-
-function escapeHtml(value: string) {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
-}
-
-function page(request: Request, status: number, title: string, body = "", script = false) {
+function page(request: Request, status: number, title: string, body = "", features: ShareFeatures = {}) {
   const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} · nepeel</title>
-<link rel="stylesheet" href="/stack-share.css"><link rel="icon" href="/favicon.svg"></head>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>${escapeHtml(title)} · nepeel</title>
+<link rel="stylesheet" href="/stack-share.css"><link rel="icon" href="/favicon.svg">${shareModule(features)}</head>
 <body><main><header><span class="brand">nepeel</span></header><h1>${escapeHtml(title)}</h1>${body}</main>
-${script ? `<script>${peelScript}</script>` : ""}</body></html>`;
+${features.comparisonHash ? `<script>${peelScript}</script>` : ""}</body></html>`;
   return new Response(request.method === "HEAD" ? null : html, {
-    status, headers: { ...stackHeaders, "Content-Type": "text/html; charset=utf-8" },
+    status, headers: { ...stackHeaders, "Content-Security-Policy": sharePolicy(features), "Content-Type": "text/html; charset=utf-8" },
   });
 }
 
@@ -72,6 +64,7 @@ function renderStack(request: Request, stack: PublicStack, token: string) {
   const path = (item: PublicStackItem) => `/stack/${token}/media/${item.id}`;
   const photos = stack.items.filter(item => item.mediaKind === "photo");
   const compare = photos.length >= 2;
+  const features: ShareFeatures = { comparisonHash: compare ? scriptDigest : undefined };
   const first = photos[0];
   const last = photos.at(-1)!;
   const peel = compare ? `<section class="peel" hidden><h2><label for="peel">Peel 비교</label></h2>
@@ -80,15 +73,18 @@ function renderStack(request: Request, stack: PublicStack, token: string) {
     <div class="slider"><span>첫 사진</span><input id="peel" type="range" min="0" max="100" value="50" aria-label="마지막 사진이 보이는 비율" aria-valuetext="50퍼센트"><span>마지막 사진</span></div></section>` : "";
   const items = stack.items.map((item, index) => {
     const label = (index + 1) + "번째 " + (item.mediaKind === "video" ? "영상" : "사진");
+    const tape = item.source === "post" && item.mediaKind === "photo" ? tapeAttribute(item.tape) : "";
     const media = item.mediaKind === "video"
       ? `<video src="${path(item)}" controls playsinline preload="metadata" aria-label="${label}"></video>`
-      : `<img src="${path(item)}" alt="${label}" loading="${index === 0 && !compare ? "eager" : "lazy"}">`;
-    const caption = item.caption ? `<figcaption>${escapeHtml(item.caption)}</figcaption>` : "";
+      : `<img src="${path(item)}" alt="${label}" loading="${index === 0 && !compare ? "eager" : "lazy"}"${tape}>`;
+    const caption = shareCaption(item.caption);
+    if (tape) features.tape = true;
+    if (caption) features.captions = true;
     const certificate = item.source === "certificate"
       ? `<a class="certificate-link" href="/verify/stack/${token}/${item.id}" aria-label="${label} 촬영 인증서 보기">촬영 인증서 보기</a>` : "";
     return `<li><figure>${media}${caption}</figure>${certificate}</li>`;
   }).join("");
-  return page(request, 200, stack.title, peel + (items ? `<ol aria-label="작업 순서">${items}</ol>` : "<p>공개된 항목이 없어요.</p>"), compare);
+  return page(request, 200, stack.title, peel + (items ? `<ol aria-label="작업 순서">${items}</ol>` : "<p>공개된 항목이 없어요.</p>"), features);
 }
 
 export async function serveStackShare(request: Request, source: StackShareSource): Promise<Response> {

@@ -5,9 +5,10 @@ interface EditorialItem {
   title: string;
   category: string;
   caption: string;
+  englishCaption: string;
   creator?: string;
   sourceUrl: string;
-  media: { type: "photo"; url: string } | { type: "video"; url: string; poster: string };
+  media: { type: "photo"; url: string; tape?: NonNullable<Post["tape"]> } | { type: "video"; url: string; poster: string };
 }
 
 const selection: EditorialItem[] = [
@@ -16,15 +17,17 @@ const selection: EditorialItem[] = [
     title: "멜트 페스티벌의 밤",
     category: "공연",
     caption: "무대에서 뻗은 노란 조명이 관객의 머리 위를 가른다.",
+    englishCaption: "Yellow beams from the stage cut through the air above the crowd.",
     creator: "Yvette de Wit",
     sourceUrl: "https://unsplash.com/photos/NYrVisodQ2M",
-    media: { type: "photo", url: "/images/concert.webp" },
+    media: { type: "photo", url: "/images/concert.webp", tape: "bottom" },
   },
   {
     id: "sample-skate",
     title: "노란 레일을 넘어서",
     category: "스케이트보드",
     caption: "스케이터가 레일 위로 몸을 띄웠다가 바닥에 착지한다.",
+    englishCaption: "A skater jumps over the rail and lands on the pavement.",
     creator: "Italo Bicca",
     sourceUrl: "https://www.pexels.com/video/skater-doing-tricks-on-a-skate-park-6553306/",
     media: { type: "video", url: "/images/skate.mp4", poster: "/images/skate.webp" },
@@ -34,6 +37,7 @@ const selection: EditorialItem[] = [
     title: "몽콕의 저녁",
     category: "거리",
     caption: "홍콩 몽콕. 거리를 지나는 사람들 위로 간판이 겹겹이 걸려 있다.",
+    englishCaption: "In Mong Kok, Hong Kong, layers of signs hang above people walking down the street.",
     creator: "Benh LIEU SONG",
     sourceUrl: "https://commons.wikimedia.org/wiki/File:Mong_Kok_Neon_Signs_Night_(48127904386).jpg",
     media: { type: "photo", url: "/images/mong-kok.webp" },
@@ -43,6 +47,7 @@ const selection: EditorialItem[] = [
     title: "물레 위의 손",
     category: "공예",
     caption: "한 손은 안쪽에서, 다른 손은 바깥에서 흙을 받친다.",
+    englishCaption: "One hand supports the clay from the inside, the other from the outside.",
     creator: "Piotrus",
     sourceUrl: "https://commons.wikimedia.org/wiki/File:Potter_in_Rabka_04.JPG",
     media: { type: "photo", url: "/images/pottery.webp" },
@@ -52,6 +57,7 @@ const selection: EditorialItem[] = [
     title: "붉은 바위 사이로",
     category: "로드트립",
     caption: "두 줄의 노란 중앙선이 붉은 바위 틈으로 이어진다.",
+    englishCaption: "Two yellow center lines lead through a gap in the red rocks.",
     sourceUrl: "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee",
     media: { type: "photo", url: "/images/roadtrip.webp" },
   },
@@ -60,6 +66,7 @@ const selection: EditorialItem[] = [
     title: "회색 배경의 초상",
     category: "인물",
     caption: "검은 셔츠를 입은 인물이 머리카락에 한 손을 댄 채 카메라를 본다.",
+    englishCaption: "A person in a black shirt looks at the camera with one hand in their hair.",
     creator: "Rafaella Mendes Diniz",
     sourceUrl: "https://unsplash.com/photos/et_78QkMMQs",
     media: { type: "photo", url: "/images/street-style.webp" },
@@ -69,6 +76,7 @@ const selection: EditorialItem[] = [
     title: "파도가 남긴 선",
     category: "바다",
     caption: "오아후 노스쇼어의 저녁. 밀려온 파도가 모래 위에 얇은 흰 선을 그린다.",
+    englishCaption: "Evening on Oahu’s North Shore. A wave leaves a thin white line across the sand.",
     creator: "Sean Oulashin",
     sourceUrl: "https://unsplash.com/photos/KMn4VEeEPR8",
     media: { type: "photo", url: "/images/ocean.webp" },
@@ -91,6 +99,7 @@ export const samplePosts: Post[] = selection.map(item => ({
   caption: item.caption,
   media_type: item.media.type,
   image_url: item.media.url,
+  ...(item.media.type === "photo" && item.media.tape ? { tape: item.media.tape } : {}),
   ...(item.media.type === "video" ? { poster_url: item.media.poster } : {}),
   user_id: "",
   username: "",

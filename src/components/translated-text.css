@@ -1,0 +1,20 @@
+button.translation-action {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: start;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+button.translation-action[aria-busy="true"] { cursor: progress; }
+button.translation-action:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }

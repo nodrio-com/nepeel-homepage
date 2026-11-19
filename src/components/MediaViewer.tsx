@@ -8,6 +8,9 @@ import type { Post } from "../../shared/types";
 import { Avatar } from "../App";
 import { supabase } from "../lib/supabase";
 import PhotoPlace from "./PhotoPlace";
+import { sampleMeta } from "../lib/samples";
+import { TranslatedText } from "./TranslatedText";
+import { TapedPhoto } from "./TapedPhoto";
 import "./media-viewer.css";
 
 interface ViewerProps {
@@ -67,6 +70,7 @@ function Frame({ post, playThrough, onReady, onEnded, onFailure }: {
       controls playsInline muted autoPlay={playThrough || !window.matchMedia("(prefers-reduced-motion: reduce)").matches}
       preload="metadata" aria-label={description} onEnded={onEnded} onError={fail} />
   );
+  if (post.tape) return <TapedPhoto src={post.image_url} alt={description} position={post.tape} fit="contain" onLoad={onReady} onError={fail} />;
   return <img src={post.image_url} alt={description} draggable={false} onLoad={onReady} onError={fail} />;
 }
 
@@ -283,12 +287,15 @@ export function PostDialog({
         </header>
         <div ref={layout} className={`viewer-layout${post.sample ? " viewer-layout-sample" : ""}`}>
           <figure className="viewer-stage">
-            <div className="viewer-media"><Frame key={mediaKey} post={post} playThrough={continuous} onReady={() => setLoadedPhoto(mediaKey)}
+            <div className="viewer-media" onFocusCapture={post.tape && !isVideo ? () => setContinuous(false) : undefined}
+              onPointerDownCapture={post.tape && !isVideo ? () => setContinuous(false) : undefined}>
+              <Frame key={mediaKey} post={post} playThrough={continuous} onReady={() => setLoadedPhoto(mediaKey)}
               onFailure={() => setContinuous(false)} onEnded={advanceIfPlaying} /></div>
             {(post.sample || navigable) && (
               <figcaption className="viewer-caption">
                 {post.sample && <div className="viewer-caption-copy">
-                  {post.caption && <p>{post.caption}</p>}
+                  {post.caption && <p onFocus={() => setContinuous(false)}><TranslatedText text={post.caption} sourceLanguage="ko"
+                    englishText={sampleMeta.find(item => item.id === post.id)?.englishCaption}/></p>}
                   {(credit || editorialTitle) && <div className="viewer-credit">
                     {editorialTitle && <small>에디터 픽</small>}
                     {credit && (credit.url ? (
@@ -314,7 +321,7 @@ export function PostDialog({
                 <Avatar name={post.display_name} />
                 <div><h3>{post.display_name}</h3><small>@{post.username}</small></div>
               </div>
-              {post.caption && <p className="viewer-body">{post.caption}</p>}
+              {post.caption && <p className="viewer-body"><TranslatedText text={post.caption}/></p>}
               {actions}
               <PhotoPlace post={post} userId={userId} onChange={onDetails} client={client} />
               <h3 className="viewer-comments-title">댓글 <span>{post.comment_count}</span></h3>
@@ -322,7 +329,7 @@ export function PostDialog({
                 {thread.loading ? <p className="muted" role="status">댓글을 불러오는 중…</p> : thread.comments.map(c => (
                   <div className="comment" key={c.id}>
                     <Avatar name={c.profiles.display_name} size="small" />
-                    <p><b>{c.profiles.display_name}</b><span>{c.body}</span></p>
+                    <p><b>{c.profiles.display_name}</b><TranslatedText text={c.body}/></p>
                   </div>
                 ))}
                 {!thread.loading && !thread.comments.length && !thread.loadError && <p className="muted">첫 번째 댓글을 남겨보세요.</p>}

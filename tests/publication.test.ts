@@ -512,7 +512,7 @@ test("nearby selection crosses date lines, handles poles, caps radius and enforc
     20,
   );
 });
-test("filter, private location and source reference persist atomically and cannot change on retry", async () => {
+test("filter, tape, private location and source reference persist atomically and cannot change on retry", async () => {
   const source = await locatedPost(37.5, 127);
   const b = backend("finish-response");
   const body = {
@@ -520,6 +520,7 @@ test("filter, private location and source reference persist atomically and canno
     context: {
       version: 1,
       filter: "warm",
+      tape: "bottom",
       place: {
         latitude: 37.566512,
         longitude: 126.978,
@@ -554,6 +555,8 @@ test("filter, private location and source reference persist atomically and canno
   );
   assert.equal(other[0].latitude, null);
   assert.equal(other[0].photo_filter, "warm");
+  assert.equal(other[0].tape, "bottom");
+  await assert.rejects(publishPhoto(b.client, alice, { ...body, context: { ...body.context, tape: "center" } }, b.verify), /변경/);
   await assert.rejects(
     publishPhoto(
       b.client,

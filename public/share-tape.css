@@ -1,0 +1,9 @@
+/* Keep the original image in the document while the tape occupies the same grid cell. */
+.share-taped-figure {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "photo" "caption";
+}
+.share-taped-figure > img, .share-taped-figure > .taped-photo { grid-area: photo; }
+.share-taped-figure > .taped-photo { pointer-events: none; border-radius: 12px; }
+.share-taped-figure > figcaption { grid-area: caption; }

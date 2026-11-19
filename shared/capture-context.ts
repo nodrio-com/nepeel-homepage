@@ -33,6 +33,10 @@ export const PHOTO_FILTERS = {
   },
 } as const;
 export type PhotoFilter = keyof typeof PHOTO_FILTERS;
+export type TapePosition = "top" | "center" | "bottom";
+export function isTapePosition(value: unknown): value is TapePosition {
+  return value === "top" || value === "center" || value === "bottom";
+}
 export type PlaceAudience = "private" | "followers" | "members";
 export interface PhotoPlace {
   latitude: number;
@@ -43,6 +47,7 @@ export interface PhotoPlace {
 export interface CaptureContext {
   version: 1;
   filter: PhotoFilter;
+  tape?: TapePosition;
   place: PhotoPlace | null;
   referencePostId: string | null;
 }
@@ -64,9 +69,11 @@ export function normalizeCaptureContext(input: unknown): CaptureContext {
     typeof value.filter !== "string" ||
     !Object.hasOwn(PHOTO_FILTERS, value.filter) ||
     Object.keys(value).some(
-      (k) => !["version", "filter", "place", "referencePostId"].includes(k),
+      (k) => !["version", "filter", "tape", "place", "referencePostId"].includes(k),
     )
   )
+    throw new Error("INVALID_CAPTURE_CONTEXT");
+  if (value.tape !== undefined && !isTapePosition(value.tape))
     throw new Error("INVALID_CAPTURE_CONTEXT");
   const reference = value.referencePostId;
   if (
@@ -112,6 +119,7 @@ export function normalizeCaptureContext(input: unknown): CaptureContext {
   return {
     version: 1,
     filter: value.filter as PhotoFilter,
+    ...(value.tape !== undefined ? { tape: value.tape } : {}),
     place,
     referencePostId: reference as string | null,
   };
@@ -124,6 +132,7 @@ export function contextPayload(context: CaptureContext) {
       ? [c.place.latitude, c.place.longitude, c.place.label, c.place.audience]
       : null,
     c.referencePostId,
+    ...(c.tape ? [c.tape] : []),
   ];
 }
 export function distanceMeters(

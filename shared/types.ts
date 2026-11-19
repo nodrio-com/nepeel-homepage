@@ -1,4 +1,4 @@
-import { contextPayload, type CaptureContext } from "./capture-context";
+import { contextPayload, type CaptureContext, type TapePosition } from "./capture-context";
 import type { PhotoDetails } from "./places";
 export type FeedMode = "all" | "following" | "saved" | "profile";
 export interface Profile {
@@ -25,6 +25,7 @@ export interface Post {
   image_url: string;
   media_type?: "photo" | "video";
   poster_url?: string;
+  tape?: TapePosition | null;
   details?: PhotoDetails;
   sample?: boolean;
 }

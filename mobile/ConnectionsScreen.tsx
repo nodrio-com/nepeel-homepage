@@ -23,6 +23,8 @@ import {
   type BlockedConnection,
 } from "../shared/connect";
 import { useConnections } from "../shared/useConnections";
+import TranslatedText from "./TranslatedText";
+import { translationLanguage } from "./lib/local-translation";
 
 const palette = {
   ink: "#20221d",
@@ -47,7 +49,7 @@ export default function ConnectionsScreen({
     return () => sub.remove();
   }, []);
   const h = useConnections(supabase, userId, active);
-  const [en, setEn] = useState(false);
+  const [en, setEn] = useState(() => translationLanguage() !== "ko");
   const t = (ko: string, english: string) => (en ? english : ko);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ConnectionPreferences>({
@@ -370,7 +372,7 @@ export default function ConnectionsScreen({
                   key={m.id}
                   style={[s.bubble, m.sender_id === userId && s.mine]}
                 >
-                  <Text style={s.message}>{m.body}</Text>
+                  <TranslatedText text={m.body} style={s.message} target={en ? "en" : "ko"} />
                   <Text style={s.time}>
                     {new Date(m.created_at).toLocaleTimeString(
                       en ? "en" : "ko",

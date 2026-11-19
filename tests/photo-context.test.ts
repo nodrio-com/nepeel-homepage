@@ -29,6 +29,8 @@ test("capture metadata strips coordinate precision and rejects unsupported field
   });
   for (const bad of [
     { ...input, filter: "beautify-ai" },
+    { ...input, tape: "left" },
+    { ...input, tape: null },
     { ...input, extra: true },
     { ...input, place: { ...input.place, latitude: 91 } },
     { ...input, place: { ...input.place, longitude: NaN } },
@@ -42,6 +44,11 @@ test("proof binds location, audience, filter and reference while legacy payload 
   const challenge = { id: "id", nonce: "nonce", expires_at: "" };
   const original = emptyCaptureContext();
   const base = capturePayload("user", challenge, "hash", "caption", original);
+  assert.deepEqual(JSON.parse(base).at(-1), ["original", null, null]);
+  for (const tape of ["top", "center", "bottom"] as const) {
+    const withTape = normalizeCaptureContext({ ...original, tape });
+    assert.deepEqual(JSON.parse(capturePayload("user", challenge, "hash", "caption", withTape)).at(-1), ["original", null, null, tape]);
+  }
   for (const changed of [
     { ...original, filter: "warm" as const },
     {

@@ -30,9 +30,7 @@ import CertificateHistory, { certificateLabel } from "./CertificateHistory";
 import type { Challenge } from "../shared/types";
 import { CaptureSubmission } from "../shared/capture-submission";
 import {
-  PHOTO_FILTERS,
   type CaptureContext,
-  type PhotoFilter,
   type PlaceAudience,
 } from "../shared/capture-context";
 import {
@@ -41,7 +39,7 @@ import {
 } from "../shared/capture-location-consent";
 import { audienceLabel, type NearbyPhoto } from "../shared/places";
 import { currentPlace } from "./lib/location";
-import FilteredPhoto from "./FilteredPhoto";
+import PhotoReview from "./PhotoReview";
 
 export default function CameraScreen({
   userId,
@@ -74,7 +72,6 @@ export default function CameraScreen({
   const recordingView = useRef<CameraView | null>(null);
   const [seconds, setSeconds] = useState(0);
   const [history, setHistory] = useState(false);
-  const [postOptions, setPostOptions] = useState(false);
   const [receipt, setReceipt] = useState<CertificateReceipt | null>(null);
   const [lastId, setLastId] = useState("");
   const [certError, setCertError] = useState("");
@@ -222,7 +219,6 @@ export default function CameraScreen({
     discardPhoto(uriRef.current);
     uriRef.current = undefined;
     setPhoto(null);
-    setPostOptions(false);
     setCaption("");
     setError("");
     setReady(false);
@@ -465,6 +461,7 @@ export default function CameraScreen({
         </Pressable>
       </View>
     );
+  const publishDisabled = !!status || locating || terminal || !photo?.challenge || (!prepared && remaining <= 0);
   return (
     <KeyboardAvoidingView
       style={s.container}
@@ -481,8 +478,10 @@ export default function CameraScreen({
         </Pressable>
         <Text style={s.logo}>nepeel / camera</Text>
         <Pressable
-          disabled={!!status || !!photo}
+          accessibilityRole="button"
+          disabled={!!status || shareBusy}
           onPress={() => {
+            if (photo) return reset();
             generation.current++;
             setReady(false);
             setSize(undefined);
@@ -490,146 +489,31 @@ export default function CameraScreen({
           }}
           style={s.button}
         >
-          <Text>전환</Text>
+          <Text>{photo ? "다음 촬영" : "전환"}</Text>
         </Pressable>
       </View>
-      <View style={s.camera}>
-        {photo ? (
-          <FilteredPhoto uri={photo.uri} filter={context.filter} />
-        ) : active && !history ? (
-          <CameraView
-            key={`${kind}-${facing}`}
-            ref={camera}
-            style={StyleSheet.absoluteFill}
-            facing={facing}
-            mode={kind === "video" ? "video" : "picture"}
-            mute
-            videoQuality="480p"
-            videoBitrate={800_000}
-            pictureSize={kind === "photo" ? size : undefined}
-            onMountError={() =>
-              setError("카메라를 열지 못했어요. 권한을 확인해 주세요.")
-            }
-            onCameraReady={async () => {
-              const current = generation.current;
-              try {
-                const sizes = kind === "photo"
-                  ? await camera.current?.getAvailablePictureSizesAsync() : [];
-                const candidates = sizes
-                  ?.filter((v) => /^\d+x\d+$/.test(v))
-                  .map((v) => ({
-                    value: v,
-                    pixels: v
-                      .split("x")
-                      .map(Number)
-                      .reduce((a, b) => a * b),
-                  }))
-                  .sort((a, b) => a.pixels - b.pixels);
-                const choice = candidates?.filter(v => v.pixels <= 1_500_000).at(-1) ?? candidates?.[0];
-                if (choice && current === generation.current) setSize(choice.value);
-              } catch {
-                /* Camera default remains available. */
-              }
-              if (
-                current === generation.current &&
-                AppState.currentState === "active"
-              )
-                setReady(true);
+      {photo ? (
+        <>
+          <PhotoReview
+            key={photo.uri}
+            uri={photo.uri}
+            filter={context.filter}
+            tape={context.tape}
+            locked={locked || terminal}
+            onFilter={filter => {
+              if (!submission.current && !pendingRef.current) setContext(old => ({ ...old, filter }));
             }}
-          />
-        ) : (
-          <View style={StyleSheet.absoluteFill} />
-        )}
-        {!photo && reference && (
-          <>
-            <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-              <Image
-                source={{ uri: reference.image_url }}
-                style={[StyleSheet.absoluteFill, { opacity: overlay }]}
-                resizeMode="contain"
-              />
-              <View style={[s.gridHorizontal, { top: "33.33%" }]} />
-              <View style={[s.gridHorizontal, { top: "66.66%" }]} />
-              <View style={[s.gridVertical, { left: "33.33%" }]} />
-              <View style={[s.gridVertical, { left: "66.66%" }]} />
-            </View>
-            <View style={s.referenceBar}>
-              <Text style={s.referenceText}>
-                {reference.display_name}님의 구도 참고
-              </Text>
-              <View style={s.referenceChoices}>
-                {[0, 0.2, 0.35, 0.5].map((value) => (
-                  <Pressable
-                    key={value}
-                    accessibilityRole="radio"
-                    accessibilityState={{ checked: overlay === value }}
-                    accessibilityLabel={
-                      value === 0
-                        ? "참고 사진 숨기기"
-                        : `참고 사진 ${Math.round(value * 100)}퍼센트`
-                    }
-                    style={[
-                      s.overlayChoice,
-                      overlay === value && s.filterSelected,
-                    ]}
-                    onPress={() => setOverlay(value)}
-                  >
-                    <Text style={s.overlayText}>
-                      {value === 0 ? "숨김" : `${Math.round(value * 100)}%`}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-          </>
-        )}
-      </View>
-      <ScrollView
-        style={s.reviewScroll}
-        contentContainerStyle={s.controls}
-        keyboardShouldPersistTaps="handled"
-      >
-        {photo ? (
-          <>
-            {receiptControls}
-            <View style={s.row}>
-              <Pressable accessibilityRole="button" style={s.secondary} disabled={!!status || shareBusy} onPress={reset}>
-                <Text>다음 촬영</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" accessibilityState={{ expanded: postOptions }}
-                style={s.button} disabled={!!status}
-                onPress={() => setPostOptions(value => !value)}>
-                <Text>{postOptions ? "게시 설정 닫기" : "필터 · 설명 · 장소"}</Text>
-              </Pressable>
-            </View>
-            {postOptions && <>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={s.filters}
-              contentContainerStyle={s.filterRow}
-            >
-              {(Object.keys(PHOTO_FILTERS) as PhotoFilter[]).map((filter) => (
-                <Pressable
-                  key={filter}
-                  disabled={locked}
-                  accessibilityRole="radio"
-                  accessibilityState={{
-                    checked: context.filter === filter,
-                    disabled: locked,
-                  }}
-                  onPress={() => setContext((old) => ({ ...old, filter }))}
-                  style={[
-                    s.filterChip,
-                    context.filter === filter && s.filterSelected,
-                  ]}
-                >
-                  <Text style={s.filterText}>
-                    {PHOTO_FILTERS[filter].label}
-                  </Text>
-                </Pressable>
-              ))}
-            </ScrollView>
+            onTape={tape => {
+              if (submission.current || pendingRef.current) return;
+              setContext(old => {
+                const next = { ...old };
+                if (tape) next.tape = tape;
+                else delete next.tape;
+                return next;
+              });
+            }}
+            receipt={receiptControls}
+          >
             <TextInput
               style={s.input}
               placeholder="이 순간에 한마디"
@@ -737,40 +621,113 @@ export default function CameraScreen({
                 </Text>
               )}
             </View>
-            </>}
+          </PhotoReview>
+          <View style={s.publishFooter}>
+            {!!error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
             {(!photo.challenge || remaining <= 0 || prepared) && <Text style={s.muted}>
               {prepared ? "같은 사진과 설정으로 게시를 다시 시도할 수 있어요."
                 : !photo.challenge ? "이 사진의 피드 게시를 준비하지 못했어요."
                 : "피드 게시 시간이 지났어요. 새 사진을 촬영해 주세요."}
             </Text>}
-            <View style={s.row}>
-              <Pressable
-                accessibilityRole="button"
-                style={[
-                  s.primary,
-                  s.flex,
-                  (!!status ||
-                    locating ||
-                    terminal || !photo.challenge ||
-                    (!prepared && remaining <= 0)) &&
-                    s.disabled,
-                ]}
-                disabled={
-                  !!status ||
-                  locating ||
-                  terminal || !photo.challenge ||
-                  (!prepared && remaining <= 0)
+            <Pressable accessibilityRole="button" disabled={publishDisabled}
+              accessibilityState={{ disabled: publishDisabled, busy: !!status }}
+              style={[s.primary, publishDisabled && s.disabled]} onPress={() => void publish()}>
+              <Text style={s.primaryText}>{status || (prepared ? "다시 게시하기 ↗" : "피드에 게시 ↗")}</Text>
+            </Pressable>
+          </View>
+        </>
+      ) : (
+        <>
+          <View style={s.camera}>
+            {active && !history ? (
+              <CameraView
+                key={`${kind}-${facing}`}
+                ref={camera}
+                style={StyleSheet.absoluteFill}
+                facing={facing}
+                mode={kind === "video" ? "video" : "picture"}
+                mute
+                videoQuality="480p"
+                videoBitrate={800_000}
+                pictureSize={kind === "photo" ? size : undefined}
+                onMountError={() =>
+                  setError("카메라를 열지 못했어요. 권한을 확인해 주세요.")
                 }
-                onPress={() => void publish()}
-              >
-                <Text style={s.primaryText}>
-                  {prepared ? "다시 게시하기 ↗" : "피드에 게시 ↗"}
-                </Text>
-              </Pressable>
-            </View>
-          </>
-        ) : (
-          <>
+                onCameraReady={async () => {
+                  const current = generation.current;
+                  try {
+                    const sizes = kind === "photo"
+                      ? await camera.current?.getAvailablePictureSizesAsync() : [];
+                    const candidates = sizes
+                      ?.filter((v) => /^\d+x\d+$/.test(v))
+                      .map((v) => ({
+                        value: v,
+                        pixels: v
+                          .split("x")
+                          .map(Number)
+                          .reduce((a, b) => a * b),
+                      }))
+                      .sort((a, b) => a.pixels - b.pixels);
+                    const choice = candidates?.filter(v => v.pixels <= 1_500_000).at(-1) ?? candidates?.[0];
+                    if (choice && current === generation.current) setSize(choice.value);
+                  } catch {
+                    /* Camera default remains available. */
+                  }
+                  if (
+                    current === generation.current &&
+                    AppState.currentState === "active"
+                  )
+                    setReady(true);
+                }}
+              />
+            ) : (
+              <View style={StyleSheet.absoluteFill} />
+            )}
+            {reference && (
+              <>
+                <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+                  <Image
+                    source={{ uri: reference.image_url }}
+                    style={[StyleSheet.absoluteFill, { opacity: overlay }]}
+                    resizeMode="contain"
+                  />
+                  <View style={[s.gridHorizontal, { top: "33.33%" }]} />
+                  <View style={[s.gridHorizontal, { top: "66.66%" }]} />
+                  <View style={[s.gridVertical, { left: "33.33%" }]} />
+                  <View style={[s.gridVertical, { left: "66.66%" }]} />
+                </View>
+                <View style={s.referenceBar}>
+                  <Text style={s.referenceText}>
+                    {reference.display_name}님의 구도 참고
+                  </Text>
+                  <View style={s.referenceChoices}>
+                    {[0, 0.2, 0.35, 0.5].map((value) => (
+                      <Pressable
+                        key={value}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: overlay === value }}
+                        accessibilityLabel={
+                          value === 0
+                            ? "참고 사진 숨기기"
+                            : `참고 사진 ${Math.round(value * 100)}퍼센트`
+                        }
+                        style={[
+                          s.overlayChoice,
+                          overlay === value && s.filterSelected,
+                        ]}
+                        onPress={() => setOverlay(value)}
+                      >
+                        <Text style={s.overlayText}>
+                          {value === 0 ? "숨김" : `${Math.round(value * 100)}%`}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+              </>
+            )}
+          </View>
+          <ScrollView style={s.reviewScroll} contentContainerStyle={s.controls} keyboardShouldPersistTaps="handled">
             <View style={s.receiptActions}>
               {(["photo", "video"] as const).map(next => (
                 <Pressable
@@ -806,21 +763,21 @@ export default function CameraScreen({
                 : !armed && !status ? "촬영 인증 준비 중…"
                 : kind === "video" ? `무음 · 최대 ${CAPTURE_CERT_VIDEO_SECONDS}초 · 비공개 인증` : "촬영하면 비공개로 인증돼요."}
             </Text>}
-          </>
-        )}
-        {!photo && !status && receiptControls}
-        {status && recordingAt === null ? (
-          <View style={s.row}>
-            <ActivityIndicator />
-            <Text style={s.muted}>{status}</Text>
-          </View>
-        ) : null}
-        {error ? (
-          <Text accessibilityRole="alert" style={s.error}>
-            {error}
-          </Text>
-        ) : null}
-      </ScrollView>
+            {!status && receiptControls}
+            {status && recordingAt === null ? (
+              <View style={s.row}>
+                <ActivityIndicator />
+                <Text style={s.muted}>{status}</Text>
+              </View>
+            ) : null}
+            {error ? (
+              <Text accessibilityRole="alert" style={s.error}>
+                {error}
+              </Text>
+            ) : null}
+          </ScrollView>
+        </>
+      )}
       {history && <CertificateHistory userId={userId} close={() => setHistory(false)} />}
     </KeyboardAvoidingView>
   );
@@ -856,13 +813,7 @@ const s = StyleSheet.create({
     alignItems: "center",
   },
   primaryText: { color: "#d4ff3f", fontWeight: "700" },
-  secondary: {
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#d9ddd0",
-    borderRadius: 10,
-  },
-  flex: { flex: 1 },
+  publishFooter: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12, gap: 4 },
   shutter: {
     width: 74,
     height: 74,
@@ -882,8 +833,6 @@ const s = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   permission: { flex: 1, padding: 30, justifyContent: "center", gap: 22 },
   title: { fontSize: 26, fontWeight: "800", letterSpacing: -1 },
-  filters: { width: "100%", flexGrow: 0 },
-  filterRow: { gap: 8 },
   filterChip: {
     minHeight: 48,
     minWidth: 60,

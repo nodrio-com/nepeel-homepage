@@ -1,8 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { PhotoFilter, PhotoPlace } from "./capture-context";
+import type { PhotoFilter, PhotoPlace, TapePosition } from "./capture-context";
 import { roundCoordinate } from "./capture-context";
 
 export interface PhotoDetails {
+  tape?: TapePosition | null;
   post_id: string;
   photo_filter: PhotoFilter;
   reference_post_id: string | null;

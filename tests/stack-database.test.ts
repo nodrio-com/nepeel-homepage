@@ -58,6 +58,7 @@ test("ordered owner stacks, grant pinning, retries, conflicts, pagination and ca
         commitment,platform,state) values($1,gen_random_uuid(),$2,'video',repeat('a',64),repeat('a',64),repeat('a',64),
         repeat($4,64),'ios',$3)`, [item.id,owner,state,mark]);
     }
+    await db.query("update public.posts set tape='center' where id=$1", [post.id]);
     await role("anon");
     await assert.rejects(save("x", [post], null), /permission denied/);
     await assert.rejects(resolve("a".repeat(43)), /permission denied/);
@@ -67,6 +68,7 @@ test("ordered owner stacks, grant pinning, retries, conflicts, pagination and ca
     await assert.rejects(db.query("select public.work_stack_owner_data($1)", [stackId]), /permission denied/);
     const library = (await db.query<{item: StackSource}>("select public.list_work_stack_sources() as item")).rows.map(row => row.item);
     assert.equal(library.length, 3);
+    assert.equal(library.find(item => item.id === post.id)?.tape, "center");
     assert.ok(library.some(item => item.id === video.id && item.mediaKind === "video" && !item.imagePath));
     const cursor = library[0];
     assert.deepEqual((await db.query<{item: StackSource}>("select public.list_work_stack_sources($1,$2,$3) as item",
@@ -92,6 +94,8 @@ test("ordered owner stacks, grant pinning, retries, conflicts, pagination and ca
     assert.deepEqual(enabled.items.map(item => item.inShare), [true,false]);
     await role("service_role");
     const manifest = (await resolve(token))!;
+    assert.equal(manifest.items[0].tape, "center");
+    assert.equal(await query<string>("select tape as result from public.resolve_post_share($1)", [original]), "center");
     assert.deepEqual(manifest.items.map(item => item.caption), ["before"]);
     assert.ok(!JSON.stringify(manifest).includes(original!) && !JSON.stringify(manifest).includes(post.id));
     const handle = manifest.items[0].id;

@@ -1,0 +1,20 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.nepeel.translation'
+version = '1.0.0'
+
+android {
+  namespace 'com.nepeel.translation'
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+dependencies {
+  implementation 'com.google.mlkit:language-id:17.0.6'
+  implementation 'com.google.mlkit:translate:17.0.3'
+}

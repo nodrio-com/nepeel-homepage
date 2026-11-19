@@ -100,6 +100,7 @@ async function hydrateFeed(
   return rows.map((p, i) => ({
     ...p,
     details: byId.get(p.id),
+    tape: byId.get(p.id)?.tape ?? null,
     image_url: urls?.[i]?.signedUrl ?? "",
   }));
 }

@@ -106,6 +106,8 @@ Supabase → Authentication → URL Configuration에 **Site URL `https://nepeel.
 
 ## Expo 앱 실행·배포
 
+앱에서 사진 설명과 댓글은 기기의 언어로, Hi 메시지는 대화 화면에서 선택한 언어로 자동 번역됩니다. Google Translate가 기기에서 텍스트를 처리하며, 필요한 언어 모델은 Wi-Fi에 연결되었을 때 내려받습니다. 번역이 준비되기 전에는 원문이 표시되며 번역 후에도 원문을 다시 볼 수 있습니다. [Google Translate 안내](https://cloud.google.com/translate)
+
 `mobile/.env.example`을 참고해 `mobile/.env`를 설정합니다. `EXPO_PUBLIC_API_URL=https://nepeel.com`이며 EAS production 프로필에도 저장되어 있습니다. URL 마지막에 `/api/capture`를 붙이지 않습니다.
 
 ```sh

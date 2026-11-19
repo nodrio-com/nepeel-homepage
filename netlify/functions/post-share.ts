@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { required } from "../../server/env.js";
-import { servePostShare } from "../../server/post-share.js";
+import { servePostShare, type SharedPost } from "../../server/post-share.js";
 
 export const config = { path: "/s/*" };
 
@@ -28,7 +28,7 @@ export default function postShare(request: Request) {
     async resolve(token) {
       const { data, error } = await storageClient().rpc("resolve_post_share", { p_token: token }).maybeSingle();
       if (error) throw error;
-      return data as { image_path: string; caption: string; mime_type: string | null } | null;
+      return data as SharedPost | null;
     },
     media: fetchPostMedia,
   });

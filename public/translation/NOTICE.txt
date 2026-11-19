@@ -1,0 +1,16 @@
+NEPEEL's on-device Korean–English translation uses the unmodified Bergamot
+worker from @mkljczk/bergamot-translator 0.4.16 under MPL-2.0.
+Source and distribution: https://codeberg.org/mkljczk/bergamot-translator
+Upstream: https://github.com/browsermt/bergamot-translator
+
+The Firefox Translations language models are distributed by Mozilla under
+MPL-2.0. Source and training pipeline: https://github.com/mozilla/translations
+License: https://www.mozilla.org/MPL/2.0/
+
+The pinned model mirror is https://huggingface.co/midudev/firefox-translations/tree/6f6acd72c26975a06a8e61b72d1fbacbd184c23f
+Checksums are from Mozilla's Firefox Remote Settings translations-models records.
+
+The bundled language identifier is Efficient Language Detector (ELD), by
+Nito T.M., under the Apache License 2.0.
+Source: https://github.com/nitotm/efficient-language-detector-js
+License: https://www.apache.org/licenses/LICENSE-2.0

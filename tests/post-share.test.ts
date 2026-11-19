@@ -19,13 +19,40 @@ test("a shared photo opens without script, member routes, or a storage URL", asy
   assert.match(html, /촬영 인증 미확인/);
   assert.ok(html.includes(`src="/s/${token}/media"`));
   assert.match(html, /&lt;script&gt;bad&lt;\/script&gt;/);
-  assert.doesNotMatch(html, /<script|#post\/|로그인|private\/member/i);
+  assert.deepEqual(html.match(/<script\b[^>]*>[\s\S]*?<\/script>/gi),
+    ['<script type="module" src="/share-enhancements.js" referrerpolicy="no-referrer"></script>']);
+  assert.doesNotMatch(html, /#post\/|로그인|private\/member/i);
   assert.equal(response.headers.get("cache-control"), "private, no-store");
   assert.equal(response.headers.get("referrer-policy"), "no-referrer");
   const media = await servePostShare(new Request(url + "/media"), source);
   assert.equal(media.headers.get("content-type"), "image/jpeg");
   assert.equal(media.headers.get("netlify-cdn-cache-control"), "no-store");
   assert.deepEqual([...new Uint8Array(await media.arrayBuffer())], [1, 2, 3]);
+  assert.doesNotMatch(media.headers.get("content-security-policy")!, /script-src|connect-src/);
+});
+
+test("optional tape belongs only to photos and only public captions enable model downloads", async () => {
+  for (const tape of [undefined, null, "top", "center", "bottom"] as const) {
+    const page = await servePostShare(new Request(url), {
+      ...source, async resolve() { return { ...row, tape, caption: "" }; },
+    });
+    const html = await page.text();
+    if (tape) {
+      assert.ok(html.includes(`data-share-tape="${tape}"`));
+      assert.match(html, /<img class="photo"/);
+      assert.match(page.headers.get("content-security-policy")!, /script-src 'self'/);
+    } else {
+      assert.doesNotMatch(html, /data-share-tape|share-enhancements\.js/);
+    }
+    assert.doesNotMatch(page.headers.get("content-security-policy")!, /connect-src|worker-src|wasm-unsafe-eval/);
+  }
+  const video = await servePostShare(new Request(url), {
+    ...source, async resolve() { return { ...row, mime_type: "video/mp4", tape: "center" }; },
+  });
+  const html = await video.text();
+  assert.doesNotMatch(html, /data-share-tape|share-tape\.css/);
+  assert.match(html, /<figcaption data-share-caption>&lt;script&gt;/);
+  assert.match(video.headers.get("content-security-policy")!, /worker-src 'self'/);
 });
 
 test("videos render native controls and forward range/HEAD without exposing the signed object", async () => {

@@ -2,7 +2,9 @@ import { Aperture, Maximize2 } from "lucide-react";
 import { useEffect, useRef, type MouseEvent, type ReactNode } from "react";
 import type { Post } from "../../shared/types";
 import { sampleMeta } from "../lib/samples";
+import { TranslatedText } from "./TranslatedText";
 import { mediaTitle } from "./MediaGrid";
+import { TapedPhoto } from "./TapedPhoto";
 import { browseHash } from "../lib/browse-route";
 
 type Props = {
@@ -41,7 +43,11 @@ export function HomeFeed({ posts, onOpen, onTopic, actions, viewerOpen }: Props)
             onPlay={event => {
               if (playing.current !== event.currentTarget) playing.current?.pause();
               playing.current = event.currentTarget;
-            }}/> :
+            }}/> : post.tape ?
+            <div className="post-photo taped-feed-frame">
+              <TapedPhoto src={post.image_url} alt={post.caption || title} position={post.tape} fit="cover"
+                postId={post.id} openLabel={title + " 사진 보기"} onOpen={() => onOpen(post)} loading={index === 0 ? "eager" : "lazy"} />
+            </div> :
             <button type="button" className="post-photo" data-post-id={post.id} aria-label={title + " 사진 보기"}
               onClick={event => { event.currentTarget.focus({ preventScroll: true }); onOpen(post); }}>
               <img src={post.image_url} alt={post.caption || title} loading={index === 0 ? "eager" : "lazy"} decoding="async"/>
@@ -49,7 +55,7 @@ export function HomeFeed({ posts, onOpen, onTopic, actions, viewerOpen }: Props)
           {actions(post)}
           <div className="post-copy">
             {Number(post.like_count) > 0 && <strong className="like-count">좋아요 {Number(post.like_count).toLocaleString()}개</strong>}
-            {post.caption && <p>{post.caption}</p>}
+            {post.caption && <p><TranslatedText text={post.caption} sourceLanguage={meta ? "ko" : undefined} englishText={meta?.englishCaption}/></p>}
           </div>
         </article>;
       })}

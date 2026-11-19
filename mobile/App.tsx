@@ -41,6 +41,7 @@ import SpatialScreen from "./SpatialScreen";
 import PhotoPlace from "./PhotoPlace";
 import PostActions from "./PostActions";
 import PostMedia from "./PostMedia";
+import TranslatedText from "./TranslatedText";
 import type { NearbyPhoto } from "../shared/places";
 import { accountAction } from "../shared/account";
 
@@ -527,10 +528,8 @@ function Social() {
               post={post} userId={session.user.id} currentUser={() => authUser.current}
               manage={mode === "profile" || !!focusId}
               react={table => react(post, table)} comment={() => setCommentsPost(post)} />
-            <Text style={s.caption}>
-              <Text style={s.bold}>{post.display_name} </Text>
-              {post.caption}
-            </Text>
+            <TranslatedText text={post.caption} style={s.caption}
+              prefix={<Text style={s.bold}>{post.display_name} </Text>} />
             <PhotoPlace
               post={post}
               userId={session.user.id}
@@ -683,7 +682,7 @@ function CommentsModal({
             renderItem={({ item }) => (
               <View style={s.comment}>
                 <Text style={s.bold}>{item.profiles.display_name}</Text>
-                <Text>{item.body}</Text>
+                <TranslatedText text={item.body} />
               </View>
             )}
             ListHeaderComponent={

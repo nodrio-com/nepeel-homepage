@@ -11,11 +11,13 @@ import {
 import type { StackCursor, StackRef, StackSource, WorkStack } from "../../shared/stacks";
 import { Dialog } from "../App";
 import { ShareLinkDialog } from "./ShareLinkDialog";
+import { TapedPhoto } from "./TapedPhoto";
+import { TranslatedText } from "./TranslatedText";
 import { supabase } from "../lib/supabase";
 import { deliverMediaLink } from "../lib/share-link";
 import "./media-stacks.css";
 
-type Media = StackSource & { sampleUrl?: string };
+type Media = StackSource & { sampleUrl?: string; englishCaption?: string };
 type Client = SupabaseClient;
 const keyOf = (item: StackRef) => `${item.source}:${item.id}`;
 const kindOf = (item: Media) => item.mediaKind === "video" ? "영상" : "사진";
@@ -47,7 +49,7 @@ function previewPool(client: Client) {
 }
 const PreviewContext = createContext<ReturnType<typeof previewPool> | null>(null);
 
-function MediaFrame({ item, full = false }: { item: Media; full?: boolean }) {
+function MediaFrame({ item, full = false, comparison = false }: { item: Media; full?: boolean; comparison?: boolean }) {
   const acquire = useContext(PreviewContext);
   const frame = useRef<HTMLSpanElement>(null);
   const [url, setUrl] = useState("");
@@ -88,7 +90,10 @@ function MediaFrame({ item, full = false }: { item: Media; full?: boolean }) {
       : src && (item.mediaKind === "video"
         ? <video src={full ? src : `${src}#t=0.001`} controls={full} playsInline
             muted={!full} preload="metadata" aria-label={captionOf(item)} onError={() => setFailed(true)} />
-        : <img src={src} alt={full ? captionOf(item) : ""} onError={() => setFailed(true)} />)}
+        : item.tape && !comparison
+          ? <TapedPhoto src={src} position={item.tape} alt={full ? captionOf(item) : ""} fit={full ? "contain" : "cover"}
+              decorative={!full} onError={() => setFailed(true)} />
+          : <img src={src} alt={full ? captionOf(item) : ""} onError={() => setFailed(true)} />)}
     {!full && item.mediaKind === "video" && <span className="ms-kind"><Play size={13} />영상</span>}
   </span>;
 }
@@ -114,9 +119,9 @@ function Compare({ photos }: { photos: Media[] }) {
         </label>)}
     </div> : <div className="ms-compare-pair"><span>첫 번째 사진</span><span>두 번째 사진</span></div>}
     <div className="ms-compare-stage">
-      <MediaFrame key={keyOf(photos[right])} item={photos[right]} full />
+      <MediaFrame key={keyOf(photos[right])} item={photos[right]} full comparison />
       <div className="ms-compare-left" style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }}>
-        <MediaFrame key={keyOf(photos[left])} item={photos[left]} full />
+        <MediaFrame key={keyOf(photos[left])} item={photos[left]} full comparison />
       </div>
       <span aria-hidden="true" className="ms-divider" style={{ left: `${split}%` }}>
         <span><ChevronLeft /><ChevronRight /></span>
@@ -167,7 +172,9 @@ function Gallery({ title, items, children, feedback, sample = false }: {
       close={() => setView(null)} wide>
       <div className="ms-reader">
         <div className="ms-reader-image"><MediaFrame key={keyOf(items[view])} item={items[view]} full /></div>
-        <p>{captionOf(items[view])}</p>
+        <p>{items[view].caption
+          ? <TranslatedText text={items[view].caption} englishText={items[view].englishCaption} />
+          : kindOf(items[view])}</p>
         {items.length > 1 && <div className="ms-reader-nav">
           <button className="ms-text" disabled={view === 0} onClick={() => setView(view - 1)}><ChevronLeft />이전</button>
           <button className="ms-text" disabled={view === items.length - 1} onClick={() => setView(view + 1)}>다음<ChevronRight /></button>
@@ -178,8 +185,10 @@ function Gallery({ title, items, children, feedback, sample = false }: {
 }
 
 const samples: Media[] = [
-  { id: "sample-pottery", caption: "한 손은 안쪽에서, 다른 손은 바깥에서 흙을 받친다.", sampleUrl: "/images/pottery.webp" },
-  { id: "sample-pottery-rim", caption: "물레 위 그릇의 옆면에 얇은 줄이 겹쳐 있다.", sampleUrl: "/images/pottery-rim.webp" },
+  { id: "sample-pottery", caption: "한 손은 안쪽에서, 다른 손은 바깥에서 흙을 받친다.",
+    englishCaption: "One hand supports the clay from the inside, the other from the outside.", sampleUrl: "/images/pottery.webp" },
+  { id: "sample-pottery-rim", caption: "물레 위 그릇의 옆면에 얇은 줄이 겹쳐 있다.",
+    englishCaption: "Fine ridges circle the bowl as it turns on the wheel.", sampleUrl: "/images/pottery-rim.webp" },
 ].map(item => ({
   ...item, source: "post", mediaKind: "photo", createdAt: "2008-05-23",
   imagePath: null, shared: false, inShare: false,
